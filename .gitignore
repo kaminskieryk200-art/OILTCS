@@ -1,0 +1,12 @@
+*.class
+*.apk
+*.jks
+*.keystore
+*.p12
+*.pem
+.env
+.env.*
+.DS_Store
+out/
+build/
+node_modules/

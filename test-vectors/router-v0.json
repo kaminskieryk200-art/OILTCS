@@ -1,0 +1,8 @@
+{
+  "description": "Synthetic unencrypted payload. Wire test only; not a safe message.",
+  "packet_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "destination_hex": "101112131415161718191a1b1c1d1e1f",
+  "remaining_hops": 3,
+  "payload_hex": "deadbe",
+  "packet_hex": "4f494c540003000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0003deadbe"
+}
