@@ -55,7 +55,10 @@ function phone(nodeId) {
     nearCount: () => 0, heardCount: () => 0, send: () => true
   };
   vm.createContext(ctx);
-  for (const f of ['rise-mesh-relay.js', 'rise-stations.js', 'rise-sign.js', 'rise-auto-oiltcs.js', 'rise-verify.js']) {
+  /* rise-crypto.js MUSI być przed rise-verify.js: kod QR od v3.40.0 niesie
+     dwa klucze (podpisów i szyfrowania), a bez tego modułu drugi jest pusty
+     i parseCode odrzuca cały kod. */
+  for (const f of ['rise-mesh-relay.js', 'rise-stations.js', 'rise-sign.js', 'rise-crypto.js', 'rise-auto-oiltcs.js', 'rise-verify.js']) {
     vm.runInContext(fs.readFileSync(TOOLS + f, 'utf8'), ctx, { filename: f });
   }
   return ctx;
@@ -71,9 +74,13 @@ await mallory.RISE_SIGN.init();
 
 // 1. Kod QR powstaje i daje się odczytać.
 const code = await alice.RISE_VERIFY.myCode();
-check('kod QR powstaje', /^RVS1\|node-A\|[A-Za-z0-9+/=]+$/.test(code), code.slice(0, 24));
+/* Od v3.40.0 kod niesie OBA klucze (podpisów i szyfrowania) — RVS2.
+   Wcześniej test sprawdzał stary format RVS1 i przechodził tylko dlatego,
+   że nikt go nie uruchamiał po zmianie. */
+check('kod QR powstaje', /^RVS2\|node-A\|[A-Za-z0-9+/=]+\|[A-Za-z0-9+/=]+$/.test(code), code.slice(0, 24));
 const parsed = alice.RISE_VERIFY.parseCode(code);
 check('kod QR daje się odczytać', !!parsed && parsed.node === 'node-A');
+check('kod QR niesie też klucz szyfrowania', !!parsed && !!parsed.encKey);
 
 // 2. Potwierdzenie zapisuje się u drugiej strony.
 const res = bob.RISE_VERIFY.confirm(parsed.node, parsed.key, 'Ala');

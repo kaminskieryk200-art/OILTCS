@@ -1,4 +1,4 @@
-# Integration notes — what Rises actually implements today (v3.35.0)
+# Integration notes — what Rises actually implements today (v3.42.0)
 
 Status: **implementation report for the prototype document.** This describes code that exists and has been built into a signed Android package, and it separates clearly what was tested and where. It is not a standard, not an audit, and not a claim of production readiness.
 
@@ -119,17 +119,25 @@ Requested: encrypt and protect the message, but not with a password — with a w
 
 **Limits.** The private key sits in app storage, so an unlocked phone is a compromised phone. If the sender has no public key for the recipient, the message travels **in plaintext (still signed)** and is counted as such. The watermark identifies a leak; it does not prevent one. The key exchange has no forward secrecy: one long-lived key pair per device, no ratcheting, no key rotation.
 
-## Offline chat list (v3.41.0)
+## Offline chats inside the normal chat screen (v3.42.0)
 
 Reported by the user: with no Internet the chat list is empty, so there is nowhere to type. The list came from the server; nothing was kept locally.
 
-`tools/rise-offline-chats.js` keeps threads on the device (`rise-local-threads-v1`, 120 threads, 300 messages each) and provides a local chat list with per-message status (`wysłane` / `czeka na zasięg`), a “new conversation” picker limited to people the device already knows (confirmed by QR/safety code, vouched for, previously talked to, seen over BLE, or paired over classic Bluetooth), automatic routing of incoming messages into the right thread, a discreet “Czaty offline (N)” button when the server returned nothing while offline, and interception of the “+” button so it opens the local list instead of an empty screen.
+v3.41.0 answered that with a **separate view** (own screen, a floating “Czaty offline (N)” button, its own “+” picker). The user rejected that shape: *“make it all work properly, without other views.”* A second interface for the same thing is also a second place for the two to disagree — and the local list did not know the history that was already on the server.
 
-**A send-path bug was found while testing this:** relay and queue sending required the BLE module to report the full state `gra`; when the module existed but had not finished starting, the message silently stayed in the queue. The check now only requires the module to be present, and peer selection still verifies that someone is actually audible.
+v3.42.0 therefore removes the separate view (`tools/rise-offline-chats.js` is gone) and moves the whole thing into the screens the app already has. `tools/rise-native-chat.js`:
 
-`node tools/offline-chats-selftest.mjs` → 10 checks.
+- **Local mirror.** On every start (and every 45 s while visible) it pulls the last 300 messages of the account from `messages` and the public directory from `profiles`, and keeps them on the device (`rise-oiltcs-chats-v1`). The mirror starts with whatever history exists, so a chat is not shorter than on the server any more.
+- **Rows in the real list.** Threads are rendered as `.contact-item` rows in a container placed directly after the app's `.contacts-list` — the same visual list, but outside React's tree, so React re-renders cannot delete our nodes and we cannot corrupt its virtual DOM.
+- **Search.** The app's own chat search now also filters our rows (one extra call in the bundle), and typing in the search bar re-filters them.
+- **The thread opens in place.** No overlay: the conversation is an absolutely positioned panel inside `.screen-content`, so the tab bar stays where it is and “back” returns to the list.
+- **Sending, in order:** the app's own input field when a native conversation is open (the message is then a normal app message, with the app's encryption, signature, queue and radio) → the REST insert into `messages` (so the other side sees it in its normal list) → the radio/OILTCS path → the queue with the status `czeka na zasięg`.
+- **The queue drains itself.** On the `online` event and every 6 s while the app is visible, everything marked `czeka na zasięg` is pushed to the server. No button, no question.
+- **Truthful status.** A failed network attempt starts a 20 s cool-down instead of hammering the server, and `navigator.onLine` is never trusted as the only signal — a Wi-Fi network without Internet reports “online”, so the send is attempted and the failure is what decides.
 
-**Limits:** this is a separate offline chat view, not a replacement of the app's native chat screen — its internal structure is not known, so the offline list is a view of its own. History from the server is **not** mirrored; a local thread starts at the first message sent or received offline.
+`node tools/native-chat-selftest.mjs` → 13 checks (headless DOM, no Android, no radio): rows appear in the existing list, no separate screen is created, history from the server lands in the device mirror, the thread opens in place, a message sent while offline goes out over the radio and stays in the conversation, a message sent with neither network nor radio waits and then sends itself when the network returns, an incoming radio message joins the same thread, the native input field is used when a real conversation is open, and nothing is duplicated.
+
+**Limits.** The bundle is patched textually (search filter, one status label, version string), so a future rebuild of the app can move those anchors — the module itself does not depend on them. Rows for people who are not in the directory yet are labelled from their identifier. Ciphertext from the app's own ECDH format is shown as “🔒 Wiadomość zaszyfrowana”, not decrypted: the plaintext copy is not stored on the server by design. Nothing here has been run on a real phone, and the radio path is still unverified on hardware.
 
 ## Honest summary
 
