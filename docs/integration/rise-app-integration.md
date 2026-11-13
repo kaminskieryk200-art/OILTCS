@@ -2,7 +2,7 @@
 
 Status: **implementation report for the prototype document.** This describes code that exists and has been built into a signed Android package, and it separates clearly what was tested and where. It is not a standard, not an audit, and not a claim of production readiness.
 
-Written against Rises `v3.36.0` (versionCode 208), published 2026-11-02.
+Written against Rises `v3.37.0` (versionCode 209), published 2026-11-02.
 
 ## What changed in the reference implementation
 
@@ -87,9 +87,17 @@ Three phones in one `vm` context with a stubbed radio: A → C through B arrives
 - an attacker signing with their own key while claiming another sender is rejected after the first pin;
 - identity survives an app restart.
 
-**Not solved:** trust on first use. If the attacker is the *first* party to claim a sender id, they are accepted. Real authentication requires exchanging keys out of band — for example a QR code shown at the first in-person meeting. Voice calls and delivery receipts are still unauthenticated.
+**Now solved for verified contacts (v3.37.0):** two phones show each other a QR code containing `RVS1|<node id>|<public key>`. The scanned key is stored as *verified* and cannot be silently overwritten; a message from a verified sender carrying a different key is rejected. Until a contact is verified, the first-contact rule still applies.
+
+**Still not solved:** verification confirms a *phone*, not a *person*. Anyone holding an unlocked app can show someone else's code. And an unverified first contact remains accepted on trust. Voice calls and delivery receipts are still unauthenticated.
 
 **One bug this work exposed and fixed:** the verification cache was keyed by `key|signature` without the body, so a tampered body carrying the same signature was treated as already verified and accepted. The cache key now includes a cheap hash of the body. It is worth recording because it shows how a security check can be defeated by its own optimisation.
+
+## Settings placement bug (found by the user, fixed in v3.37.0)
+
+The in-app settings card was inserted by clicking a text label “Zaawansowane” (Advanced). A check of the app bundle shows that label **does not exist** — the app has an “Opcje” (Options) tab only. The card therefore never appeared, while the release notes told the user to open Options → Advanced. The card is now inserted into the real Options screen, located by labels it actually contains (`Blokada PIN`, `Status konta`).
+
+This is worth recording as a testing lesson: the JavaScript-level tests passed because they never exercised the UI, and no test asserted that the settings entry point existed.
 
 ## Honest summary
 

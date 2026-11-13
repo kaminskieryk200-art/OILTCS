@@ -11,4 +11,5 @@ if command -v node >/dev/null; then
   for f in tools/*.js; do node --check "$f"; done
   node tools/stations-selftest.mjs
   node tools/signing-selftest.mjs
+  node tools/verify-selftest.mjs
 fi
