@@ -40,6 +40,10 @@ The included `FrameIO` wraps a frame in a four-byte **signed** big-endian length
 
 Characteristic-value size in the reference is 20–512 bytes. Fragments must arrive contiguously in order with the same sequence and total length. An invalid fragment, gap, overlap, mismatched sequence, 10-second idle timeout, or 120-second total assembly time discards partial state. These headers are **not authenticated**. This codec alone does not define GATT service discovery, pairing, network permissions or end-to-end security; interoperability of actual BLE links is unverified.
 
+## Not the format the Rises app uses
+
+The Rises app (v3.35.0) uses its own prototype frame — `R1|from|to|hops|via|body` in UTF-8, carried inside BLE chunks with an 8-byte header (`R` `S` | id | index | total | length). It is deliberately simple, has no authentication, and is **not compatible** with the `OILT` packet above. Unifying them, and deciding which one is authoritative, is an open task; see [integration notes](integration/rise-app-integration.md).
+
 ## What v0 does not specify
 
 Contact discovery, secure address-to-account mapping, key enrollment and revocation, an authenticated application message, persistent relay storage, reliable multi-hop ACKs, audio encoding, congestion control, relay rewards, and interoperability profiles are not standardized. Identity and issuer classes here are experiments, not a normative extension of this packet format.

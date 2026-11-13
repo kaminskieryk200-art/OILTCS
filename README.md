@@ -2,19 +2,23 @@
 
 **Off-Internet Long-Term Communication Service** is an experimental project for passing messages over a chain of cooperating devices without requiring an Internet connection for each hop.
 
-> **Status: research prototype, not a standard or a working Rises feature.** Do not use it for private or safety-critical communications. The current reference router does not provide authentication, encryption, persistent forwarding, voice calls, billing, or delivery guarantees. The code has not been audited or tested over real radios.
+> **Status: research prototype, not a standard.** Do not use it for private or safety-critical communications. The reference router does not provide authentication, encryption, persistent forwarding, voice calls, billing, or delivery guarantees. The code has not been audited.
+>
+> As of 2026-11-02, the Rises Android app (v3.35.0) contains a BLE link (advertising, scanning, GATT server and client, no pairing required) and a “charging station” relay model. That is an implementation, **not** a field result: no physical device, radio or emulator was used to test it. See [integration notes](docs/integration/rise-app-integration.md).
 
 ## What it is — and is not
 
 OILTCS is intended to be a transport-independent **overlay**: implementations can carry its packets over compatible local links, potentially including Bluetooth LE, Wi-Fi-based links, or other transports. It does not create radio range, replace Bluetooth or Wi-Fi, or automatically work with arbitrary devices. Each hop needs a working compatible link and a participating device. Bluetooth and Wi-Fi are independent technologies with their own specifications, licensing requirements, and trademarks; this project is not affiliated with or certified by their organizations.
 
-In the future, a Rises app could select OILTCS automatically when Internet connectivity is unavailable, without a separate OILTCS button. **That integration does not exist today.** Continuous relay participation and reliable background operation are subject to permissions, operating-system restrictions, battery, and available peers. Never rely on the prototype for emergencies.
+A Rises build now selects the local path automatically when Internet connectivity is unavailable, without a separate OILTCS button (v3.35.0). The disabling switch is hidden in Options → Advanced and warns that offline messaging stops working without it. **The app does not speak the `OILT` router packet format** described here; it uses its own prototype frame, and converging the two is unresolved. Continuous relay participation and reliable background operation are subject to permissions, operating-system restrictions, battery, and available peers. Never rely on the prototype for emergencies.
 
 ## Repository
 
 - [Protocol draft](docs/PROTOCOL-v0.md) — exact experimental router packet format and behavior implemented here.
 - [Security and identity](docs/SECURITY-AND-IDENTITY.md) — threat model and proposed, incomplete account-key verification.
 - [Architecture and roadmap](docs/ARCHITECTURE.md) — layers, lifecycle, limitations, and remaining work.
+- [Integration notes: Rises v3.35.0](docs/integration/rise-app-integration.md) — what the app implements, what was verified, and what is untested.
+- `tools/` — station model, relay envelope and BLE JavaScript layer copied from the app, with `node tools/stations-selftest.mjs`.
 - `src/main/java` — standalone experimental router, framing, and identity-verification components.
 - `experiments/identity/issuer-lab.mjs` — a dependency-injected example issuer, **not a deployed service**.
 - `test-vectors/` — a synthetic packet vector, not encrypted content.
