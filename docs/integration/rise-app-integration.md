@@ -2,7 +2,7 @@
 
 Status: **implementation report for the prototype document.** This describes code that exists and has been built into a signed Android package, and it separates clearly what was tested and where. It is not a standard, not an audit, and not a claim of production readiness.
 
-Written against Rises `v3.37.0` (versionCode 209), published 2026-11-02.
+Written against Rises `v3.38.0` (versionCode 210), published 2026-11-02.
 
 ## What changed in the reference implementation
 
@@ -89,7 +89,14 @@ Three phones in one `vm` context with a stubbed radio: A → C through B arrives
 
 **Now solved for verified contacts (v3.37.0):** two phones show each other a QR code containing `RVS1|<node id>|<public key>`. The scanned key is stored as *verified* and cannot be silently overwritten; a message from a verified sender carrying a different key is rejected. Until a contact is verified, the first-contact rule still applies.
 
-**Still not solved:** verification confirms a *phone*, not a *person*. Anyone holding an unlocked app can show someone else's code. And an unverified first contact remains accepted on trust. Voice calls and delivery receipts are still unauthenticated.
+**Verification without meeting (v3.38.0).** A QR code is useless when the other person is far away, which a reviewer pointed out. Two remote paths were added:
+
+- **Safety code.** 12 characters derived from the sender's public key (SHA-256, base32 alphabet without `0/O/1/I`, grouped `XXXX-XXXX-XXXX`). It can be read aloud over any voice channel — a phone call, a radio, a walkie-talkie — or sent by SMS, and the recipient types it in. 60 bits, so guessing is not practical. `node tools/distance-verify-selftest.mjs` covers it.
+- **Vouching.** A contact *you* have already verified can vouch for a third person. The vouch is `V1|voucher|POREKA|target|target key|signature|hops`, signed with the voucher's key, and travels through the mesh like an ordinary message. Vouches from unverified senders are rejected, conflicting vouches about the same person are rejected, and a vouch never overrides an identity confirmed in person.
+
+Every delivered message now carries a trust level: `potwierdzony` (confirmed), `poręczony` (vouched), `nieznany` (unknown) or `sprzeczny` (conflicting).
+
+**Still not solved:** verification confirms a *phone*, not a *person*; vouching propagates trust, so a mistaken or deceived voucher spreads the error; and a safety code read aloud can be overheard. Anyone holding an unlocked app can show someone else's code. And an unverified first contact remains accepted on trust. Voice calls and delivery receipts are still unauthenticated.
 
 **One bug this work exposed and fixed:** the verification cache was keyed by `key|signature` without the body, so a tampered body carrying the same signature was treated as already verified and accepted. The cache key now includes a cheap hash of the body. It is worth recording because it shows how a security check can be defeated by its own optimisation.
 

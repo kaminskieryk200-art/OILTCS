@@ -4,7 +4,7 @@
 
 > **Status: research prototype, not a standard.** Do not use it for private or safety-critical communications. The reference router does not provide authentication, encryption, persistent forwarding, voice calls, billing, or delivery guarantees. The code has not been audited.
 >
-> As of 2026-11-02, the Rises Android app (v3.37.0) contains a BLE link (advertising, scanning, GATT server and client, no pairing required), a “charging station” relay model, per-device ECDSA P-256 message signing with trust-on-first-use pinning, and out-of-band identity verification by scanning a QR code shown on the peer's screen. That is an implementation, **not** a field result: no physical device, radio or emulator was used to test it. See [integration notes](docs/integration/rise-app-integration.md).
+> As of 2026-11-02, the Rises Android app (v3.38.0) contains a BLE link (advertising, scanning, GATT server and client, no pairing required), a “charging station” relay model, per-device ECDSA P-256 message signing with trust-on-first-use pinning, and out-of-band identity verification that works without the two people meeting: a 12-character safety code read aloud (or sent by SMS), plus vouching — a verified contact can vouch for a third person, and the vouch travels through the mesh like a normal message. Scanning a QR code at an in-person meeting remains the strongest option. That is an implementation, **not** a field result: no physical device, radio or emulator was used to test it. See [integration notes](docs/integration/rise-app-integration.md).
 
 ## What it is — and is not
 
@@ -18,7 +18,7 @@ A Rises build now selects the local path automatically when Internet connectivit
 - [Security and identity](docs/SECURITY-AND-IDENTITY.md) — threat model and proposed, incomplete account-key verification.
 - [Architecture and roadmap](docs/ARCHITECTURE.md) — layers, lifecycle, limitations, and remaining work.
 - [Integration notes: Rises v3.35.0](docs/integration/rise-app-integration.md) — what the app implements, what was verified, and what is untested.
-- `tools/` — station model, relay envelope, BLE JavaScript layer and message signing copied from the app; tests: `node tools/stations-selftest.mjs`, `node tools/signing-selftest.mjs`, `node tools/verify-selftest.mjs`.
+- `tools/` — station model, relay envelope, BLE JavaScript layer and message signing copied from the app; tests: `node tools/stations-selftest.mjs`, `node tools/signing-selftest.mjs`, `node tools/verify-selftest.mjs`, `node tools/distance-verify-selftest.mjs`.
 - `tools/RisesBleBridge.java` — the Android BLE bridge source (advertising, scanning, GATT server/client), included for review; it is not part of this JVM build.
 - `src/main/java` — standalone experimental router, framing, and identity-verification components.
 - `experiments/identity/issuer-lab.mjs` — a dependency-injected example issuer, **not a deployed service**.

@@ -12,4 +12,5 @@ if command -v node >/dev/null; then
   node tools/stations-selftest.mjs
   node tools/signing-selftest.mjs
   node tools/verify-selftest.mjs
+  node tools/distance-verify-selftest.mjs
 fi

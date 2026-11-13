@@ -479,6 +479,15 @@
       var payload = [String(f.from || ''), String(f.to || ''), String(f.hops || 0), String(f.via || ''), String(f.body || '')].join('\u0001');
       var ok = await S.verify(f.key, payload, f.sig);
       if (!ok) { S.noteRejected(); return { ok: false, reason: 'podpis nie zgadza się' }; }
+      // potwierdzona tożsamość (skan QR) jest mocniejsza niż przypięcie „na wiarę"
+      var V = window.RISE_VERIFY;
+      if (V && V.checkSender) {
+        var chk = V.checkSender(f.from, f.key);
+        if (chk.known && !chk.verified) {
+          S.noteRejected();
+          return { ok: false, reason: 'tożsamość nie zgadza się z potwierdzoną (skan QR)' };
+        }
+      }
       var pin = S.pin(f.from, f.key);
       if (!pin.ok) { return { ok: false, reason: pin.reason }; }
       S.noteVerified();
@@ -490,6 +499,17 @@
 
   function przyjmij(f, avoidAddress, rawText, unsigned) {
     if (!f || !f.body) return false;
+
+    // poręczenie tożsamości — obsługujemy je jak wiadomość, ale nie pokazujemy w skrzynce
+    if (String(f.body).indexOf('V1|') === 0 && window.RISE_VERIFY && window.RISE_VERIFY.acceptVouch) {
+      window.RISE_VERIFY.acceptVouch(f.body).then(function (r) {
+        if (r && r.ok) {
+          status('Poręczenie przyjęte: ' + r.target + ' (poręczył ' + r.by + ')', true);
+          if (window.RISE_VERIFY.state) save();
+        }
+      }).catch(function () {});
+      return true;
+    }
     if (!f.body) return false;
     if (sentFrames[String(rawText)]) return false;   // moja własna ramka wróciła — stop
     if (f.from && f.from === stateNodeId()) return false;
@@ -521,7 +541,14 @@
   /* Wiadomość, która jest dla mnie: pokazujemy ją aplikacji i zapisujemy. */
   var inbox = [];
   function dostarcz(body, from) {
-    var wpis = { from: from || null, text: String(body), at: Date.now() };
+    var zaufanie = null;
+    var V = window.RISE_VERIFY;
+    if (V && V.trustOf && from) {
+      var s = window.RISE_SIGN;
+      var k = s && s.pinnedKey ? s.pinnedKey(from) : null;
+      try { zaufanie = V.trustOf(from, k); } catch (e) { zaufanie = null; }
+    }
+    var wpis = { from: from || null, text: String(body), at: Date.now(), trust: zaufanie ? zaufanie.level : 'nieznany' };
     inbox.push(wpis);
     if (inbox.length > 200) inbox.shift();
     status('Wiadomość doszła bez internetu: „' + String(body).slice(0, 70) + '”', true);
@@ -836,7 +863,17 @@
     startStation: startStation,
     stopStation: stopStation,
     addStation: addStation,
-    signState: function () { return window.RISE_SIGN ? window.RISE_SIGN.state() : null; },
+    trustOf: function (node) {
+      if (!window.RISE_VERIFY || !window.RISE_VERIFY.trustOf) return null;
+      var k = window.RISE_SIGN && window.RISE_SIGN.pinnedKey ? window.RISE_SIGN.pinnedKey(node) : null;
+      return window.RISE_VERIFY.trustOf(node, k);
+    },
+    signState: function () {
+      var st = window.RISE_SIGN ? window.RISE_SIGN.state() : null;
+      var v = window.RISE_VERIFY ? window.RISE_VERIFY.state() : null;
+      if (st && v) st.verifiedPeople = v.verified;
+      return st;
+    },
     stationState: function () { return station ? station.state() : null; },
     stations: function () { return registry ? registry.all() : []; },
     nodeId: stateNodeId,

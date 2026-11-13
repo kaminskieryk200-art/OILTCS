@@ -61,6 +61,60 @@
     return 'RVS1|' + nodeId() + '|' + key;
   }
 
+  /* Krótki kod do przeczytania przez telefon albo wysłania SMS-em.
+   * 12 znaków = 60 bitów: za dużo, żeby ktoś „wygenerował" pasujący klucz,
+   * dość krótko, żeby przeczytać przez słuchawkę. */
+  var ALFABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // bez 0/O/1/I, żeby się nie myliło
+
+  function base32(bytes, count) {
+    var out = '';
+    var bits = 0, buf = 0;
+    for (var i = 0; i < bytes.length && out.length < count; i++) {
+      buf = (buf << 8) | bytes[i];
+      bits += 8;
+      while (bits >= 5 && out.length < count) {
+        out += ALFABET[(buf >>> (bits - 5)) & 31];
+        bits -= 5;
+      }
+    }
+    return out;
+  }
+
+  /* Kod bezpieczeństwa: 12 znaków, zawsze w grupach po 4 — ABCDEF-GHJKLM-NPQRST */
+  async function fingerprint(node, keyB64) {
+    var sub = root.crypto && root.crypto.subtle;
+    if (!sub) return '';
+    try {
+      var raw = keyB64 ? (S() && S().unb64 ? S().unb64(keyB64) : null) : null;
+      var material = raw || new TextEncoder().encode(String(keyB64 || ''));
+      var digest = await sub.digest('SHA-256', material);
+      var bytes = new Uint8Array(digest);
+      var code = base32(bytes, 12);
+      return code.slice(0, 4) + '-' + code.slice(4, 8) + '-' + code.slice(8, 12);
+    } catch (e) { return ''; }
+  }
+
+  /* Mój kod bezpieczeństwa — do przeczytania przez telefon. */
+  async function myFingerprint() {
+    var s = S();
+    if (!s) return '';
+    if (!s.ready()) { try { await s.init(); } catch (e) {} }
+    var key = s.publicKeyRaw ? await s.publicKeyRaw() : '';
+    if (!key) return '';
+    return fingerprint(nodeId(), key);
+  }
+
+  /* Sprawdzenie kodu wpisanego przez użytkownika: kod musi pasować do podanej osoby. */
+  async function checkFingerprint(node, keyB64, typed) {
+    var want = await fingerprint(node, keyB64);
+    var got = String(typed || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    var expect = want.replace(/-/g, '');
+    if (!expect) return { ok: false, reason: 'nie udało się policzyć kodu' };
+    if (got.length !== expect.length) return { ok: false, reason: 'kod ma ' + expect.length + ' znaków' };
+    if (got !== expect) return { ok: false, reason: 'kod się nie zgadza — to inny klucz' };
+    return { ok: true };
+  }
+
   function parseCode(text) {
     var m = /^RVS1\|([^|]{1,120})\|([A-Za-z0-9+/=]{20,})$/.exec(String(text || '').trim());
     if (!m) return null;
@@ -102,6 +156,98 @@
   function checkSender(node, keyHex) {
     if (!verified[node]) return { verified: false, known: false };
     return { verified: verified[node].key === keyHex, known: true };
+  }
+
+  /* --- poręczenia (działa na odległość) ---
+   * Skoro nie da się zeskanować kogoś, kto jest 300 km dalej, robi to ktoś,
+   * kto go widział: „potwierdzam, że ten klucz należy do tej osoby".
+   * Poręczenie jedzie przez sieć jak zwykła wiadomość i jest podpisane. */
+
+  var VOUCH_KEY = 'rise-vouches-v1';     // nodeId -> { key, by, at, hops }
+  var vouches = {};
+
+  function loadVouches() {
+    var ls = storage();
+    if (!ls) return;
+    try { vouches = JSON.parse(ls.getItem(VOUCH_KEY) || '{}') || {}; } catch (e) { vouches = {}; }
+  }
+
+  function saveVouches() {
+    var ls = storage();
+    if (!ls) return;
+    try { ls.setItem(VOUCH_KEY, JSON.stringify(vouches)); } catch (e) {}
+  }
+
+  /* Treść poręczenia — podpisywana tym samym kluczem co wiadomości. */
+  function vouchBody(targetNode, targetKey) {
+    return 'POREKA|' + targetNode + '|' + targetKey;
+  }
+
+  async function makeVouch(targetNode, targetKey, hops) {
+    var s = S();
+    if (!s) return null;
+    if (!s.ready()) { try { await s.init(); } catch (e) {} }
+    var body = vouchBody(targetNode, targetKey);
+    var sig = await s.sign(body);
+    if (!sig) return null;
+    return 'V1|' + nodeId() + '|' + body + '|' + sig.sig + '|' + (hops || 0);
+  }
+
+  /* Przyjmuje poręczenie od kogoś, kogo znamy. Zwraca {ok, reason}. */
+  async function acceptVouch(text) {
+    var parts = String(text || '').split('|');
+    if (parts.length < 6 || parts[0] !== 'V1') return { ok: false, reason: 'nie poręczenie' };
+    var by = parts[1];
+    var body = parts.slice(2, parts.length - 2).join('|');
+    var sigB64 = parts[parts.length - 2];
+    var hops = parseInt(parts[parts.length - 1], 10) || 0;
+
+    var m = /^POREKA\|([^|]+)\|([A-Za-z0-9+/=]+)$/.exec(body);
+    if (!m) return { ok: false, reason: 'zła treść poręczenia' };
+    var targetNode = m[1], targetKey = m[2];
+
+    // poręczać może tylko ktoś, kogo sami potwierdziliśmy
+    if (!verified[by]) return { ok: false, reason: 'poręczyciel nie jest potwierdzony' };
+
+    var s = S();
+    if (!s || !s.verify) return { ok: false, reason: 'brak modułu podpisów' };
+    var keyOfBy = verified[by].key;
+    if (!s.learnKey || !s.verify) return { ok: false, reason: 'brak weryfikacji' };
+    s.learnKey(keyOfBy, s.unb64(keyOfBy));
+    var ok = await s.verify(keyOfBy, body, sigB64);
+    if (!ok) return { ok: false, reason: 'podpis poręczyciela nie pasuje' };
+
+    // nie nadpisujemy potwierdzenia zdobytego osobiście
+    if (verified[targetNode] && verified[targetNode].key !== targetKey) {
+      return { ok: false, reason: 'ta osoba jest już potwierdzona innym kluczem' };
+    }
+    if (vouches[targetNode] && vouches[targetNode].key !== targetKey) {
+      return { ok: false, reason: 'sprzeczne poręczenia dla tej osoby' };
+    }
+    vouches[targetNode] = { key: targetKey, by: by, at: Date.now(), hops: hops };
+    saveVouches();
+    if (s.pin) s.pin(targetNode, targetKey);
+    return { ok: true, target: targetNode, by: by };
+  }
+
+  /* Poziom zaufania dla nadawcy wiadomości. */
+  function trustOf(node, keyB64) {
+    if (verified[node]) {
+      return verified[node].key === keyB64
+        ? { level: 'potwierdzony', ok: true }
+        : { level: 'sprzeczny', ok: false };
+    }
+    if (vouches[node]) {
+      if (vouches[node].key !== keyB64) return { level: 'sprzeczny', ok: false };
+      return { level: 'poręczony', ok: true, by: vouches[node].by, hops: vouches[node].hops };
+    }
+    return { level: 'nieznany', ok: true };
+  }
+
+  function vouchList() {
+    return Object.keys(vouches).map(function (k) {
+      return { node: k, key: vouches[k].key, by: vouches[k].by, at: vouches[k].at, hops: vouches[k].hops };
+    });
   }
 
   /* --- rysowanie i czytanie kodów --- */
@@ -292,6 +438,64 @@
       }
     }
 
+    var kodBox = el('div', 'margin-top:6px;padding:10px 12px;border-radius:10px;background:rgba(31,157,99,0.10);' +
+      'font-size:12px;color:#14202b;line-height:1.5;',
+      'Daleko? Nie musicie się widzieć. Odczytajcie sobie kod bezpieczeństwa przez telefon albo wyślijcie SMS-em.');
+    card.appendChild(kodBox);
+
+    var kodLine = el('div', 'margin-top:6px;font-family:ui-monospace,Menlo,monospace;font-size:16px;' +
+      'font-weight:700;letter-spacing:1px;color:#14202b;', 'Kod: …');
+    card.appendChild(kodLine);
+    myFingerprint().then(function (code) {
+      kodLine.textContent = 'Twój kod: ' + (code || '—');
+      kodLine.title = 'Odczytaj ten kod drugiej osobie przez telefon lub wyślij SMS-em.';
+    });
+
+    var input = el('input', 'margin-top:8px;width:100%;box-sizing:border-box;padding:10px 12px;border-radius:10px;' +
+      'border:1px solid rgba(0,0,0,0.18);font-size:14px;font-family:ui-monospace,Menlo,monospace;');
+    input.setAttribute('placeholder', 'Wpisz kod drugiej osoby (XXXX-XXXX-XXXX)');
+    input.setAttribute('autocapitalize', 'characters');
+    card.appendChild(input);
+
+    var wynik = el('div', 'margin-top:6px;font-size:12px;color:#5a6b78;', '');
+    card.appendChild(wynik);
+
+    var bKod = el('button',
+      'margin-top:8px;width:100%;padding:11px 14px;border-radius:12px;background:transparent;' +
+      'border:1px solid rgba(0,0,0,0.18);color:#14202b;font-weight:600;font-size:13px;cursor:pointer;',
+      'Sprawdź kod od drugiej osoby');
+    bKod.onclick = function () {
+      wynik.textContent = 'Sprawdzam…';
+      var wpisany = input.value;
+      // kod sprawdzamy wobec klucza, który znamy z ostatniej wiadomości tej osoby
+      var kandydaci = Object.keys(verified).concat(Object.keys(vouches));
+      var s = S();
+      var proba = null;
+      for (var i = 0; i < kandydaci.length; i++) {
+        var k = s && s.pinnedKey ? s.pinnedKey(kandydaci[i]) : null;
+        if (k) { proba = { node: kandydaci[i], key: k }; break; }
+      }
+      if (!proba) { wynik.textContent = 'Najpierw musi dojść od niej wiadomość, żeby znać jej klucz.'; return; }
+      checkFingerprint(proba.node, proba.key, wpisany).then(function (r) {
+        if (r.ok) {
+          var conf = confirm(proba.node, proba.key, '');
+          wynik.textContent = conf.ok ? '✔ Kod się zgadza — ' + proba.node + ' potwierdzony.' : 'Kod zgodny, ale: ' + conf.reason;
+        } else {
+          wynik.textContent = '✖ ' + r.reason;
+        }
+      });
+    };
+    card.appendChild(bKod);
+
+    var por = vouchList();
+    if (por.length) {
+      card.appendChild(el('div', 'margin-top:12px;font-weight:600;font-size:12px;', 'Poręczeni przez znajomych:'));
+      for (var j = 0; j < por.length; j++) {
+        card.appendChild(el('div', 'font-size:12px;color:#5a6b78;padding:3px 0;',
+          '• ' + por[j].node + ' — poręczył ' + por[j].by));
+      }
+    }
+
     var b1 = el('button',
       'margin-top:12px;width:100%;padding:11px 14px;border-radius:12px;border:0;background:#1f9d63;' +
       'color:#fff;font-weight:600;font-size:13px;cursor:pointer;', 'Pokaż mój kod');
@@ -337,6 +541,7 @@
 
   function boot() {
     load();
+    loadVouches();
     if (root.document && root.document.body) {
       installSection();
       var tries = 0;
@@ -349,6 +554,13 @@
 
   root.RISE_VERIFY = {
     boot: boot,
+    fingerprint: fingerprint,
+    myFingerprint: myFingerprint,
+    checkFingerprint: checkFingerprint,
+    makeVouch: makeVouch,
+    acceptVouch: acceptVouch,
+    trustOf: trustOf,
+    vouchList: vouchList,
     myCode: myCode,
     parseCode: parseCode,
     confirm: confirm,
