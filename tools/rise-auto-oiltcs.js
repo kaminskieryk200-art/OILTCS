@@ -404,11 +404,30 @@
   }
 
   /* --- ramka na drucie: R1|od|do|skoków|treść (bez pionów w treści) --- */
-  function packFrameSigned(from, to, hops, body, via, keyB64, sig) {
+  function packFrameSigned(from, to, hops, body, via, keyB64, sig, encKey) {
+    var moj = via || (window.RISE_BT && window.RISE_BT.myAddress ? window.RISE_BT.myAddress() : '');
+    return 'R3|' + String(from || '').replace(/\|/g, '/') + '|' +
+      String(to || '').replace(/\|/g, '/') + '|' + (hops || 0) + '|' +
+      String(moj || '') + '|' + String(keyB64 || '') + '|' + String(encKey || '') + '|' +
+      String(sig || '') + '|' + String(body || '');
+  }
+
+  function packFrameSignedOld(from, to, hops, body, via, keyB64, sig) {
     var moj = via || (window.RISE_BT && window.RISE_BT.myAddress ? window.RISE_BT.myAddress() : '');
     return 'R2|' + String(from || '').replace(/\|/g, '/') + '|' +
       String(to || '').replace(/\|/g, '/') + '|' + (hops || 0) + '|' +
       String(moj || '') + '|' + String(keyB64 || '') + '|' + String(sig || '') + '|' + String(body || '');
+  }
+
+  /* Ramka R3: R3|od|do|skoki|via|klucz|klucz szyfrowania|podpis|treść. */
+  function unpackFrame3(text) {
+    var parts = String(text || '').split('|');
+    if (parts.length < 9) return null;
+    return {
+      body: parts.slice(8).join('|'), from: parts[1] || null, to: parts[2] || null,
+      hops: parseInt(parts[3], 10) || 0, via: parts[4] || '',
+      key: parts[5] || '', encKey: parts[6] || '', sig: parts[7] || '', signed: true
+    };
   }
 
   /* Ramka R2: R2|od|do|skoki|via|klucz|podpis|treść (6 pierwszych pól pozycyjnych). */
@@ -455,6 +474,16 @@
    * Każdy telefon jest stacją: przyjmuje, ładuje do pełna i puszcza dalej. */
   async function handleRadioText(text, avoidAddress) {
     var s = String(text || '');
+    if (s.indexOf('R3|') === 0) {
+      var f3 = unpackFrame3(s);
+      if (!f3) return false;
+      if (f3.encKey && window.RISE_CRYPTO && f3.from) {
+        try { window.RISE_CRYPTO.learnPeer(f3.from, f3.encKey); } catch (e) {}
+      }
+      var spr3 = await verifySigned(f3);
+      if (!spr3.ok) { status('Odrzucone: ' + spr3.reason, true); return false; }
+      return przyjmij(f3, avoidAddress, s);
+    }
     if (s.indexOf('R2|') === 0) {
       var f2 = unpackFrame2(s);
       if (!f2) return false;
@@ -530,12 +559,47 @@
         relayToNextStation(naladowana.body, naladowana.from, naladowana.to, avoidAddress || f.via);
       } else {
         station.markDelivered();
-        dostarcz(naladowana.body, naladowana.from);
+        odbierz(naladowana.body, naladowana.from).then(function (t) { if (t) dostarcz(t, naladowana.from); });
       }
       return true;
     }
-    if (moje) dostarcz(f.body, f.from);
+    if (moje) odbierz(f.body, f.from).then(function (t) { if (t) dostarcz(t, f.from); });
     return moje;
+  }
+
+  /* Odbiera treść: odszyfrowuje (jeśli zaszyfrowana) i sprawdza znak wodny. */
+  async function odbierz(body, from) {
+    var tresc = String(body || '');
+    var C = window.RISE_CRYPTO;
+    var M = window.RISE_MARK;
+
+    if (C && C.isSealed && C.isSealed(tresc)) {
+      var jawny = await C.openFrom(from, tresc);
+      if (!jawny) {
+        status('Nie mogę odczytać wiadomości — to nie jest dla tego telefonu.', true);
+        return null;
+      }
+      tresc = jawny;
+    }
+
+    if (M && M.read) {
+      var r = M.read(tresc);
+      tresc = r.text;
+      if (r.mark) {
+        var chk = await M.check(tresc + M.OPEN + (await M.markFor({
+          serial: r.mark.serial, toNode: stateNodeId(), toKey: C && C.myKey ? C.myKey() : '',
+          fromNode: from, fromKey: C && C.peerKey ? C.peerKey(from) : '', seq: r.mark.seq
+        })) + M.CLOSE, {
+          toNode: stateNodeId(), toKey: C && C.myKey ? C.myKey() : '',
+          fromNode: from, fromKey: C && C.peerKey ? C.peerKey(from) : ''
+        });
+        if (!chk.ok) {
+          status('Uwaga: ' + chk.reason, true);
+          return null;
+        }
+      }
+    }
+    return tresc;
   }
 
   /* Wiadomość, która jest dla mnie: pokazujemy ją aplikacji i zapisujemy. */
@@ -575,6 +639,52 @@
 
   /* Podpisuje ramkę i dopiero wtedy ją wysyła. Bez klucza wysyła niepodpisaną
    * (starsze wersje ją przyjmą), ale licznik pokaże, że jest niepodpisana. */
+  /* Numer kolejny wiadomości w rozmowie — wchodzi do znaku wodnego. */
+  var seqCounter = 0;
+  function nextSeq() {
+    seqCounter++;
+    var ls = storage();
+    if (ls) {
+      try {
+        var v = parseInt(ls.getItem('rise-seq') || '0', 10) || 0;
+        v++; seqCounter = v;
+        ls.setItem('rise-seq', String(v));
+      } catch (e) {}
+    }
+    return seqCounter;
+  }
+
+  /* Przygotowuje treść do wysłania: znak wodny dla tej pary osób,
+   * potem szyfrowanie kluczem odbiorcy. Hasła nie ma nigdzie. */
+  async function prepareBody(from, to, text) {
+    var tresc = String(text || '');
+    var C = window.RISE_CRYPTO;
+    var M = window.RISE_MARK;
+    var S = window.RISE_SIGN;
+
+    if (M && M.stamp) {
+      try {
+        var toKey = C && C.peerKey && to ? C.peerKey(to) : null;
+        var fromKey = C && C.myKey ? C.myKey() : null;
+        tresc = await M.stamp(tresc, {
+          serial: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 8),
+          toNode: to, toKey: toKey,
+          fromNode: stateNodeId(), fromKey: fromKey,
+          seq: nextSeq()
+        });
+      } catch (e) {}
+    }
+
+    if (C && to) {
+      try {
+        if (!C.ready || !C.ready()) { if (C.init) await C.init(); }
+        var zaszyfrowane = await C.sealFor(to, tresc);
+        if (zaszyfrowane) return zaszyfrowane;
+      } catch (e) {}
+    }
+    return tresc;   // brak klucza odbiorcy — idzie jawnie, ale podpisane
+  }
+
   async function signFrame(from, to, hops, body, via) {
     var S = window.RISE_SIGN;
     if (!S || !S.init) return packFrame(from, to, hops, body, via);
@@ -591,14 +701,16 @@
       var rawKey = await S.publicKeyRaw();
       keyB64 = rawKey || '';
     } catch (e) { keyB64 = ''; }
-    return packFrameSigned(from, to, hops, body, via, keyB64, podpis.sig);
+    var encKey = (window.RISE_CRYPTO && window.RISE_CRYPTO.myKey) ? window.RISE_CRYPTO.myKey() : '';
+    return packFrameSigned(from, to, hops, body, via, keyB64, podpis.sig, encKey);
   }
 
   /* Przekazanie dalej: najpierw do znanej stacji po Bluetooth, potem kolejka. */
   async function relayToNextStation(text, from, to, avoidAddress) {
     var R = window.RISE_MESH_RELAY;
     if (!R) return false;
-    var frame = await signFrame(from, to, (R.MAX_TTL || 16), text, null);
+    var gotowa = await prepareBody(from, to, text);
+    var frame = await signFrame(from, to, (R.MAX_TTL || 16), gotowa, null);
 
     // 1) BLE: najbliższy obcy telefon z Rises — bez parowania, bez pytania
     var B = window.RISE_BLE;
@@ -619,7 +731,8 @@
     var next = registry ? registry.best(stateNodeId(), avoidAddress) : null;
     if (next && next.address && window.RISE_BT) {
       try {
-        var frame = await signFrame(from, to, (R.MAX_TTL || 16), text, null);
+        var gotowa = await prepareBody(from, to, text);
+    var frame = await signFrame(from, to, (R.MAX_TTL || 16), gotowa, null);
         rememberFrame(frame);
         if (window.RISE_BT.sendText(next.address, frame)) {
           status('Przekazane do stacji ' + next.id + ' — sygnał naładowany do pełna.', false);
@@ -856,6 +969,15 @@
     setPeerMac: setPeerMac,
     handleRadioText: handleRadioText,
     drainRadio: drainRadio,
+    prepareBody: prepareBody,
+    odbierz: odbierz,
+
+    /* Klucz publiczny do szyfrowania — przekazywany w kodzie QR i poręczeniach. */
+    myEncKey: function () { return window.RISE_CRYPTO ? window.RISE_CRYPTO.myKey() : ''; },
+    learnPeerKey: function (node, key) {
+      return window.RISE_CRYPTO ? window.RISE_CRYPTO.learnPeer(node, key) : false;
+    },
+    cryptoState: function () { return window.RISE_CRYPTO ? window.RISE_CRYPTO.state() : null; },
     relay: relayToNextStation,
     packFrame: packFrame,
     unpackFrame: unpackFrame,

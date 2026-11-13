@@ -2,7 +2,7 @@
 
 Status: **implementation report for the prototype document.** This describes code that exists and has been built into a signed Android package, and it separates clearly what was tested and where. It is not a standard, not an audit, and not a claim of production readiness.
 
-Written against Rises `v3.38.0` (versionCode 210), published 2026-11-02.
+Written against Rises `v3.40.0` (versionCode 212), published 2026-11-02.
 
 ## What changed in the reference implementation
 
@@ -105,6 +105,19 @@ Every delivered message now carries a trust level: `potwierdzony` (confirmed), `
 The in-app settings card was inserted by clicking a text label “Zaawansowane” (Advanced). A check of the app bundle shows that label **does not exist** — the app has an “Opcje” (Options) tab only. The card therefore never appeared, while the release notes told the user to open Options → Advanced. The card is now inserted into the real Options screen, located by labels it actually contains (`Blokada PIN`, `Status konta`).
 
 This is worth recording as a testing lesson: the JavaScript-level tests passed because they never exercised the UI, and no test asserted that the settings entry point existed.
+
+## Message encryption without a password (v3.40.0)
+
+Requested: encrypt and protect the message, but not with a password — with a watermark built into the text, bound to one specific recipient.
+
+- **Key agreement.** Each device keeps a second key pair (ECDH P-256) beside its signing key. A sender combines its own private key with the recipient's public key; HKDF produces an AES-256-GCM key. The same key is derived independently by the recipient. **No secret is typed by any user.**
+- **Key distribution.** The QR code is now `RVS2|node|signing key|encryption key`; vouches carry the target's encryption key; and every `R3` frame carries the sender's encryption key, so two parties can encrypt after the first message. `R2`/`R1` frames are still accepted.
+- **Watermark.** `serial|recipient tag|sender tag|sequence`, inserted as invisible `U+2063` characters at the end of the text **before** encryption and stripped **before** the text is shown. `check()` rejects a mark that does not match the specific sender/recipient pair, so a mark lifted from one conversation does not validate in another.
+- **Relays** see only `RSX1:<iv>:<ciphertext>` and cannot read it.
+
+`node tools/encryption-selftest.mjs` → 13 checks: separate keys per device, both keys exchanged by QR, ciphertext on the wire with no plaintext, recipient reads, bystander does not, watermark round-trips without changing what a human sees, watermark valid only for its own pair, missing key = plaintext.
+
+**Limits.** The private key sits in app storage, so an unlocked phone is a compromised phone. If the sender has no public key for the recipient, the message travels **in plaintext (still signed)** and is counted as such. The watermark identifies a leak; it does not prevent one. The key exchange has no forward secrecy: one long-lived key pair per device, no ratcheting, no key rotation.
 
 ## Honest summary
 

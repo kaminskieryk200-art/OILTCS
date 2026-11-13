@@ -51,14 +51,17 @@
     return 'node';
   }
 
-  /* Zawartość kodu QR: RVS1|<nodeId>|<klucz publiczny base64> */
+  /* Zawartość kodu QR: RVS2|<nodeId>|<klucz podpisów>|<klucz szyfrowania> */
   async function myCode() {
     var s = S();
     if (!s) return '';
     if (!s.ready()) { try { await s.init(); } catch (e) {} }
     var key = s.publicKeyRaw ? await s.publicKeyRaw() : '';
     if (!key) return '';
-    return 'RVS1|' + nodeId() + '|' + key;
+    var C = root.RISE_CRYPTO;
+    if (C) { try { if (!C.ready()) await C.init(); } catch (e) {} }
+    var encKey = (C && C.myKey) ? C.myKey() : '';
+    return 'RVS2|' + nodeId() + '|' + key + '|' + encKey;
   }
 
   /* Krótki kod do przeczytania przez telefon albo wysłania SMS-em.
@@ -116,14 +119,20 @@
   }
 
   function parseCode(text) {
-    var m = /^RVS1\|([^|]{1,120})\|([A-Za-z0-9+/=]{20,})$/.exec(String(text || '').trim());
-    if (!m) return null;
-    return { node: m[1], key: m[2] };
+    var t = String(text || '').trim();
+    var m3 = /^RVS2\|([^|]{1,120})\|([A-Za-z0-9+/=]{20,})\|([A-Za-z0-9+/=]{20,})$/.exec(t);
+    if (m3) return { node: m3[1], key: m3[2], encKey: m3[3] };
+    var m2 = /^RVS1\|([^|]{1,120})\|([A-Za-z0-9+/=]{20,})$/.exec(t);
+    if (m2) return { node: m2[1], key: m2[2], encKey: '' };
+    return null;
   }
 
   /* Zapisuje potwierdzoną tożsamość. Od tej chwili ten klucz jest jedyny słuszny. */
-  function confirm(node, keyHex, label) {
+  function confirm(node, keyHex, label, encKey) {
     if (!node || !keyHex) return { ok: false, reason: 'brak danych' };
+    if (encKey && root.RISE_CRYPTO && root.RISE_CRYPTO.learnPeer) {
+      try { root.RISE_CRYPTO.learnPeer(node, encKey); } catch (e) {}
+    }
     var s = S();
     if (s && s.pin) {
       // podmieniamy przypięcie na potwierdzony klucz (nadpisujemy TOFU)
@@ -179,15 +188,15 @@
   }
 
   /* Treść poręczenia — podpisywana tym samym kluczem co wiadomości. */
-  function vouchBody(targetNode, targetKey) {
-    return 'POREKA|' + targetNode + '|' + targetKey;
+  function vouchBody(targetNode, targetKey, targetEncKey) {
+    return 'POREKA|' + targetNode + '|' + targetKey + '|' + String(targetEncKey || '');
   }
 
-  async function makeVouch(targetNode, targetKey, hops) {
+  async function makeVouch(targetNode, targetKey, hops, targetEncKey) {
     var s = S();
     if (!s) return null;
     if (!s.ready()) { try { await s.init(); } catch (e) {} }
-    var body = vouchBody(targetNode, targetKey);
+    var body = vouchBody(targetNode, targetKey, targetEncKey);
     var sig = await s.sign(body);
     if (!sig) return null;
     return 'V1|' + nodeId() + '|' + body + '|' + sig.sig + '|' + (hops || 0);
@@ -202,9 +211,9 @@
     var sigB64 = parts[parts.length - 2];
     var hops = parseInt(parts[parts.length - 1], 10) || 0;
 
-    var m = /^POREKA\|([^|]+)\|([A-Za-z0-9+/=]+)$/.exec(body);
+    var m = /^POREKA\|([^|]+)\|([A-Za-z0-9+/=]+)(?:\|([A-Za-z0-9+/=]*))?$/.exec(body);
     if (!m) return { ok: false, reason: 'zła treść poręczenia' };
-    var targetNode = m[1], targetKey = m[2];
+    var targetNode = m[1], targetKey = m[2], targetEnc = m[3] || '';
 
     // poręczać może tylko ktoś, kogo sami potwierdziliśmy
     if (!verified[by]) return { ok: false, reason: 'poręczyciel nie jest potwierdzony' };
@@ -223,6 +232,9 @@
     }
     if (vouches[targetNode] && vouches[targetNode].key !== targetKey) {
       return { ok: false, reason: 'sprzeczne poręczenia dla tej osoby' };
+    }
+    if (targetEnc && root.RISE_CRYPTO && root.RISE_CRYPTO.learnPeer) {
+      try { root.RISE_CRYPTO.learnPeer(targetNode, targetEnc); } catch (e) {}
     }
     vouches[targetNode] = { key: targetKey, by: by, at: Date.now(), hops: hops };
     saveVouches();
@@ -392,7 +404,7 @@
               var parsed = parseCode(code.data);
               if (parsed) {
                 stop();
-                var res = confirm(parsed.node, parsed.key, '');
+                var res = confirm(parsed.node, parsed.key, '', parsed.encKey);
                 if (res.ok) {
                   status.textContent = 'Potwierdzone: ' + parsed.node + '. Od teraz ta osoba jest zweryfikowana.';
                   var ok = el('div', 'color:#39d98a;font-weight:600;', '✔ Zaufany kontakt');
@@ -554,6 +566,10 @@
 
   root.RISE_VERIFY = {
     boot: boot,
+    /* Poręczenie z kluczem szyfrowania — wygodne wywołanie dla aplikacji. */
+    vouchFor: async function (targetNode, targetSignKey, targetEncKey, hops) {
+      return makeVouch(targetNode, targetSignKey, hops || 1, targetEncKey || '');
+    },
     fingerprint: fingerprint,
     myFingerprint: myFingerprint,
     checkFingerprint: checkFingerprint,
