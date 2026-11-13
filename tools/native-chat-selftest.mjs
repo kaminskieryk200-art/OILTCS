@@ -175,6 +175,20 @@ const directory = [{ id: PEER, username: 'Kaminski', avatar_class: 'avatar-blue'
   p3.api.syncConversation();
   check('drugie doklejenie nic nie dubluje', nativeState[PEER].length === before, before + ' -> ' + nativeState[PEER].length);
 
+  /* --- 8b. lista nie jest przerysowywana bez powodu (v3.43.1) ---
+     Zgłoszenie: „nie da się przewijać". Moduł kazał aplikacji przerysować
+     listę czatów co kilka sekund, a przy trzymanym palcu przeglądarka
+     przerywa wtedy przewijanie. Teraz render idzie tylko przy zmianie treści. */
+  p3.api.syncConversation();
+  if (p3.api.refresh) p3.api.refresh(true);          // pierwsze odświeżenie może coś dopisać
+  const rendersBefore = renders;
+  p3.api.syncConversation();
+  if (p3.api.refresh) { p3.api.refresh(); p3.api.refresh(true); }
+  check('bez zmian w treści lista nie jest przerysowywana', renders === rendersBefore, rendersBefore + ' -> ' + renders);
+  await new Promise((r) => setTimeout(r, 1600));      // moduł ma 1,5 s odstępu między przerysowaniami
+  p3.ctx.window.dispatchEvent(new p3.ctx.CustomEvent('rise-mesh-message', { detail: { from: PEER, text: 'nowa przez radio', at: Date.now() } }));
+  check('ale nowa wiadomość odświeża listę (nowy podgląd)', renders > rendersBefore, rendersBefore + ' -> ' + renders);
+
   /* --- 9. wiadomość czekająca pokazuje się w rozmowie jako „czeka" --- */
   p3.ctx.navigator.onLine = false;
   p3.ctx.fetch = () => Promise.reject(new Error('offline'));

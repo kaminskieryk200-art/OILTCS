@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wstrzykuje OILTCS w istniejące funkcje aplikacji Rises (v3.43.0).
+"""Wstrzykuje OILTCS w istniejące funkcje aplikacji Rises (v3.43.1).
 
 Zasada: nie powstaje żaden nowy widok. Patch podmienia pięć miejsc w bundlu
 tak, żeby natywny interfejs korzystał z `tools/rise-native-chat.js`:
@@ -122,7 +122,7 @@ def main():
     m = re.search(r'Xo = `v(\d+)\.(\d+)\.(\d+)`;', src)
     if m:
         cur = tuple(int(x) for x in m.groups())
-        want = (3, 43, 0)
+        want = (3, 43, 1)
         if cur < want:
             src = src.replace(m.group(0), 'Xo = `v%d.%d.%d`;' % want, 1)
             print('  ✓ wersja: v%s -> v%d.%d.%d' % ('.'.join(m.groups()), *want))

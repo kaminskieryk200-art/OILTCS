@@ -1,4 +1,4 @@
-/* Rises — OILTCS pod zwykłym interfejsem (v3.43.0).
+/* Rises — OILTCS pod zwykłym interfejsem (v3.43.1).
  *
  * Zasada: NIE MA własnego okna ani własnej listy. Rozmowa to ta sama rozmowa,
  * ten sam nagłówek, to samo pole tekstowe, ten sam przycisk „Wyślij". OILTCS
@@ -16,6 +16,15 @@
  *
  * Ten plik nie tworzy żadnego elementu na ekranie. Dostarcza tylko dane
  * natywnym widokom aplikacji (patrz tools/patch-native-chat.py).
+ *
+ * v3.43.1 — nauka z „nie da się przewijać": lista czatów jest przerysowywana
+ * TYLKO wtedy, gdy naprawdę zmieni się jej zawartość (nowa osoba albo nowy
+ * podgląd). Wcześniej moduł kazał ją przerysować co kilka sekund bez powodu,
+ * a przy trzymanym palcu na liście przeglądarka przerywa wtedy przewijanie.
+ * Dodatkowo aplikacji przekazujemy WYŁĄCZNIE dopisanie osób, których jeszcze
+ * nie ma — bez zmiany kolejności i bez własnych pól w istniejących wierszach.
+ * Przewijanie palcem i brak paska jak na laptopie to arkusz rise-touch-scroll.css
+ * (statyczny plik, nie ten moduł — moduł nadal nie tworzy żadnego elementu).
  */
 (function (root) {
   if (root.RISE_OFFLINE_CHAT) return;
@@ -30,7 +39,8 @@
 
   var state = {
     me: null, dir: [], threads: {}, lastSync: 0, cfg: null,
-    offlineAt: 0, booted: false, timer: null
+    offlineAt: 0, booted: false, timer: null,
+    listSig: ''      /* odcisk tego, co moduł pokazał na liście */
   };
   var api = null;            /* most do aplikacji (ustawia bundle) */
   var injected = {};         /* id wiadomości już wstawionych do otwartej rozmowy */
@@ -515,9 +525,10 @@
   }
 
   function notify() {
-    /* aplikacja wczytała historię z serwera — odświeżamy podglądy na liście */
-    if (api && api.renderList) { try { api.renderList(); } catch (e) {} }
+    /* aplikacja wczytała historię z serwera — odświeżamy podglądy na liście,
+       ale tylko jeśli podglądy naprawdę się zmieniły (bramka w refresh) */
     syncConversation();
+    refresh(true);
   }
 
   function timeText(ts) {
@@ -527,13 +538,30 @@
     } catch (e) { return ''; }
   }
 
+  /* Odcisk tego, co moduł dokłada do listy: id, nazwa, podgląd i czas.
+     Póki się nie zmienia, aplikacja nie ma po co przerysowywać listy. */
+  function listSignature() {
+    var parts = [];
+    people().forEach(function (t) {
+      if (!t || !t.id) return;
+      var d = byId(t.id) || null;
+      var last = t.msgs && t.msgs.length ? t.msgs[t.msgs.length - 1] : null;
+      parts.push([t.id, (d && d.name) || t.label || '', last ? last.text : '', last ? last.at : 0].join('|'));
+    });
+    return parts.join('\n');
+  }
+
   var lastRefresh = 0;
   function refresh(force) {
-    if (!api || !api.renderList) return;
+    if (!api || !api.renderList) return false;
+    var sig = listSignature();
+    if (sig === state.listSig) return false;         /* nic nowego — nie ruszamy listy */
     var now = Date.now();
-    if (!force && now - lastRefresh < 800) return;   /* bez młócenia renderów */
+    if (!force && now - lastRefresh < 1500) return false;
+    state.listSig = sig;
     lastRefresh = now;
     try { api.renderList(); } catch (e) {}
+    return true;
   }
 
   /* ------------------------------------------------------------------ */
@@ -546,8 +574,11 @@
     push(from, { sender: 'them', text: String(d.text), at: d.at || Date.now(), st: 'radio' }, personSeed(from));
     noteOnline();
     syncConversation();
-    refresh(true);   /* przyszła wiadomość — lista ma to pokazać od razu */
+    /* przyszła wiadomość: lista odświeży się sama, jeśli podgląd się zmienił —
+       wymuszanie renderu przy każdym pakiecie potrafiło szarpnąć przewijaniem */
+    refresh();
   }
+
 
   /* ------------------------------------------------------------------ */
   /* start                                                               */
@@ -589,17 +620,32 @@
       });
     }, SYNC_MS);
 
-    setInterval(function () { if (api && api.current && api.current()) syncConversation(); }, TICK_MS);
+    setInterval(function () {
+      if (!doc || (doc.visibilityState && doc.visibilityState !== 'visible')) return;
+      if (api && api.current && api.current()) syncConversation();
+    }, TICK_MS);
     return true;
   }
 
   /* ------------------------------------------------------------------ */
   /* most do aplikacji: ustawia go łatka w bundlu                        */
   /* ------------------------------------------------------------------ */
+
   root.RISE_OFFLINE_CHAT = {
     boot: boot,
     /* aplikacja podaje swoje funkcje — moduł nic sam nie rysuje */
-    useBridge: function (bridge) { api = bridge || null; return !!api; },
+    useBridge: function (bridge) {
+      var first = !api;
+      api = bridge || null;
+      if (api) {
+        /* aplikacja właśnie oddała stan — za chwilę będzie miała wczytaną
+           historię z serwera. Odświeżamy podglądy raz, nie w kółko. */
+        setTimeout(function () {
+          try { if (api && api.current) notify(); } catch (e) {}
+        }, 4000);
+      }
+      return !!api;
+    },
     merge: merge,
     person: person,
     preview: preview,

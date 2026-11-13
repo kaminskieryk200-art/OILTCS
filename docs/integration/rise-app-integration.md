@@ -1,4 +1,4 @@
-# Integration notes — what Rises actually implements today (v3.43.0)
+# Integration notes — what Rises actually implements today (v3.43.1)
 
 Status: **implementation report for the prototype document.** This describes code that exists and has been built into a signed Android package, and it separates clearly what was tested and where. It is not a standard, not an audit, and not a claim of production readiness.
 
@@ -142,6 +142,30 @@ The patch is strict: each anchor must occur exactly once, otherwise it prints wh
 `node tools/native-chat-selftest.mjs` → 29 checks, including “the module creates no element on the screen” and “it appends an incoming radio message to the open conversation”. `node tools/patch-native-chat-selftest.mjs` → 11 checks.
 
 **Limits, stated plainly.** The bundle is minified application code that I do not have the sources for; the patch targets exact strings, so any rebuild of the app can move them — the patch then refuses to run instead of corrupting the file, and the six strings have to be re-derived. Radio delivery is still unverified on hardware, and nothing here has been run on a physical phone. Local history is a mirror of the last 300 server messages plus everything that went through OILTCS; it is not a full archive. Ciphertext in the app's own `ecdh-v1` format is shown as “🔒 Wiadomość zaszyfrowana”, not decrypted, because the plaintext is not on the server by design.
+
+## Scrolling on a phone (v3.43.1)
+
+Reported from a screenshot: *“you broke the interface again, it does not scroll”* and *“if you have any other menu that scrolls, you only have a scrollbar like on a laptop — I am on a phone”*.
+
+What the app ships, found by reading the files inside the APK:
+
+| Where | What it does | Why the list would not scroll |
+| --- | --- | --- |
+| `assets/index-*.css` | `html,body{touch-action:none;overflow:hidden}` | fine on its own — the screen must not move — but `touch-action` is inherited by everything inside, so lists had no permission to move vertically |
+| `assets/index-*.css` | `.contacts-list{flex:1;padding:4px 8px;overflow-y:auto}` | no `min-height:0`; a flex child never shrinks below its content, so as rows are added the list grows downwards instead of scrolling, and the rows below are cut off |
+| `assets/index-*.css` | `::-webkit-scrollbar{width:4px;height:4px}` | a 4 px bar drawn on the phone — the “laptop scrollbar” |
+| `rise-ui-fix.js` (v3.39.0) | `pullIntoView()` calls `scrollIntoView()` on whatever sticks out past the right edge | the only mechanism that could move a scroller — and it can also jump the list while a finger is down |
+| `rise-native-chat.js` (v3.43.0) | `refresh(true)` after every radio packet, plus `renderList` on each bridge attach | React re-renders the whole list; a re-render while a finger is dragging cancels the scroll |
+
+v3.43.1 changes exactly those five things and nothing about the layout:
+
+- new `rise-scroll-guard.js` — on a touch screen only, gives the lists `min-height:0`, `touch-action:pan-y`, `overscroll-behavior:contain`, hides the scrollbar (`scrollbar-width:none` and `::-webkit-scrollbar{display:none}`), and keeps `html,body` movable vertically. On a computer it does nothing at all, so the normal scrollbar stays.
+- `rise-ui-fix.js` no longer touches anything inside a scrolling list, no longer calls `scrollIntoView` from inside one, and does nothing while a finger is on the screen.
+- `rise-native-chat.js` re-renders the chat list only when its content really changed (new person or new preview), at most every 1,5 s.
+
+`node tools/scroll-guard-selftest.mjs` → 12 checks (long list becomes scrollable, short list untouched, scrollbar hidden on touch only, nothing moves while a finger is down, computer unchanged). `node tools/native-chat-selftest.mjs` → 31, `node tools/patch-native-chat-selftest.mjs` → 11.
+
+**Not verified on a real phone** — I have no device here, so this is derived from the shipped files, not from watching it scroll. If it still sticks, the next thing to suspect is the app's own scrolling code inside the bundle (`touchmove`, `scrollTop`, `deltaY` appear there).
 
 ## Honest summary
 
