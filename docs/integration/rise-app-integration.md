@@ -2,7 +2,7 @@
 
 Status: **implementation report for the prototype document.** This describes code that exists and has been built into a signed Android package, and it separates clearly what was tested and where. It is not a standard, not an audit, and not a claim of production readiness.
 
-Written against Rises `v3.35.0` (versionCode 207), published 2026-11-02.
+Written against Rises `v3.36.0` (versionCode 208), published 2026-11-02.
 
 ## What changed in the reference implementation
 
@@ -40,7 +40,7 @@ Verified in this environment:
 
 - **no physical BLE device was used.** No radio, no second phone, no emulator. Every claim about range, throughput, discovery latency and real reassembly is untested;
 - `isMultipleAdvertisementSupported()` is the only capability gate; phones that cannot advertise fall back to classic Bluetooth with no user-visible explanation;
-- advertising payload size: 7 bytes of service data plus the 128-bit service UUID exceeds the legacy 31-byte advertising PDU when the UUID is included in the advertisement. The current implementation does **not** move the UUID to the scan response. **This is the most likely field failure of this release** and is listed as the first item of remaining work;
+- ~~advertising payload size~~ — **fixed in v3.36.0**: the advertisement now carries 7 bytes of manufacturer data (11 bytes in the AD structure, 20 bytes of headroom) instead of 25 bytes of service data with a 128-bit UUID. The scanner also still accepts the old service-data format, and `onStartFailure` with `ADVERTISE_FAILED_DATA_TOO_LARGE` retries with a 4-byte payload. **Still untested on hardware**, because no device that rejects advertisements was available;
 - GATT write throughput with `WRITE_TYPE_DEFAULT` and a 40 ms delay between chunks gives roughly 10 chunks/s ≈ 1.8 kB/s of payload. A 2 kB message therefore takes about a second per hop. This is an estimate from the code, not a measurement;
 - `connectGatt` to a non-paired peer may trigger an OS pairing prompt on some Android builds. Untested.
 
@@ -72,9 +72,24 @@ Three phones in one `vm` context with a stubbed radio: A → C through B arrives
 1. **Fix the advertising payload** (move the service UUID to the scan response, or advertise a 16-bit alias) and test on two real phones.
 2. Replace the fixed 40 ms inter-chunk delay with a write-completion callback and MTU negotiation; measure real throughput.
 3. Persist the duplicate cache so a restart does not re-accept old traffic.
-4. Add an authenticated source field (signature over `from`, body and a counter) — right now anyone who can write to the characteristic can inject a frame claiming any sender. This is the largest security gap.
+4. ~~Add an authenticated source field~~ — **done in v3.36.0**: every frame is `R2|from|to|hops|via|key|signature|body`, signed with the sender’s ECDSA P-256 key over `from\u0001to\u0001hops\u0001via\u0001body`. The receiver verifies, learns the sender’s public key from the frame, and pins the first key seen for that sender (TOFU); a changed key is rejected. Legacy `R1` frames are still accepted and counted as unsigned. **TOFU is not authentication of identity** — see the new section below.
 5. Background behaviour: a foreground service with `FOREGROUND_SERVICE_CONNECTED_DEVICE`, battery budget, and behaviour when the screen is off — currently untested entirely.
 6. Interoperability with the JVM reference router in this repository. The app frame (`R1|…`) is a prototype format and is **not** the `OILT` router packet described in `PROTOCOL-v0.md`; converging them is unresolved.
+
+## Message signing (v3.36.0) — and what it does not solve
+
+`tools/rise-sign.js` / `tools/signing-selftest.mjs` (10 checks):
+
+- a device generates one ECDSA P-256 key pair and keeps it in app storage;
+- each frame carries the sender's public key and a signature over the routing fields and the body;
+- the receiver verifies the signature, learns the key, and pins the first key seen per sender;
+- a body changed after signing is rejected (the signature covers it);
+- an attacker signing with their own key while claiming another sender is rejected after the first pin;
+- identity survives an app restart.
+
+**Not solved:** trust on first use. If the attacker is the *first* party to claim a sender id, they are accepted. Real authentication requires exchanging keys out of band — for example a QR code shown at the first in-person meeting. Voice calls and delivery receipts are still unauthenticated.
+
+**One bug this work exposed and fixed:** the verification cache was keyed by `key|signature` without the body, so a tampered body carrying the same signature was treated as already verified and accepted. The cache key now includes a cheap hash of the body. It is worth recording because it shows how a security check can be defeated by its own optimisation.
 
 ## Honest summary
 

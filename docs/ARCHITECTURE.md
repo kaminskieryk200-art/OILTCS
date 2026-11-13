@@ -4,7 +4,7 @@
 
 1. **Local link:** a compatible transport provides bounded packet delivery between nearby peers. BLE fragmentation is included as a codec only; this repository still provides no BLE application of its own. A BLE link (advertising, scanning, GATT server/client, chunking, peer RSSI) now exists in the separate Rises app and is described in [integration notes](integration/rise-app-integration.md) — implemented, **not tested on hardware**, and not interoperable with the `OILT` router packet in this repository.
 2. **Router:** an experimental flooding router forwards opaque packets through currently connected peers. It has no durable store-and-forward, route discovery, congestion control, or authenticated routing.
-3. **Identity and cryptography:** research components validate experimental credentials and signed handshakes. They do not provide real account enrollment, trusted identity distribution, offline revocation, or an audited secure protocol.
+3. **Identity and cryptography:** research components validate experimental credentials and signed handshakes. They do not provide real account enrollment, trusted identity distribution, offline revocation, or an audited secure protocol. The app layer now signs messages with a per-device ECDSA key and pins the first key of each sender (TOFU); that blocks impersonation after first contact and detects tampering, but it is not enrolled identity.
 4. **Application:** a messenger would need persistent encrypted inbox/outbox storage, normal chat integration, authenticated acknowledgments, retry and cross-transport deduplication, device permissions, lifecycle management, and user-facing error states. No such application integration is included here.
 
 ## Proposed milestones — not completed

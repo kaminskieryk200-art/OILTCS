@@ -10,4 +10,5 @@ if command -v node >/dev/null; then
   # warstwa aplikacji: stacje ładujące sygnał, deduplikacja, brak pętli (bez radia)
   for f in tools/*.js; do node --check "$f"; done
   node tools/stations-selftest.mjs
+  node tools/signing-selftest.mjs
 fi

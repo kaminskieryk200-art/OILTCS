@@ -4,7 +4,7 @@
 
 > **Status: research prototype, not a standard.** Do not use it for private or safety-critical communications. The reference router does not provide authentication, encryption, persistent forwarding, voice calls, billing, or delivery guarantees. The code has not been audited.
 >
-> As of 2026-11-02, the Rises Android app (v3.35.0) contains a BLE link (advertising, scanning, GATT server and client, no pairing required) and a “charging station” relay model. That is an implementation, **not** a field result: no physical device, radio or emulator was used to test it. See [integration notes](docs/integration/rise-app-integration.md).
+> As of 2026-11-02, the Rises Android app (v3.36.0) contains a BLE link (advertising, scanning, GATT server and client, no pairing required), a “charging station” relay model, and per-device ECDSA P-256 message signing with trust-on-first-use pinning. That is an implementation, **not** a field result: no physical device, radio or emulator was used to test it. See [integration notes](docs/integration/rise-app-integration.md).
 
 ## What it is — and is not
 
@@ -18,7 +18,8 @@ A Rises build now selects the local path automatically when Internet connectivit
 - [Security and identity](docs/SECURITY-AND-IDENTITY.md) — threat model and proposed, incomplete account-key verification.
 - [Architecture and roadmap](docs/ARCHITECTURE.md) — layers, lifecycle, limitations, and remaining work.
 - [Integration notes: Rises v3.35.0](docs/integration/rise-app-integration.md) — what the app implements, what was verified, and what is untested.
-- `tools/` — station model, relay envelope and BLE JavaScript layer copied from the app, with `node tools/stations-selftest.mjs`.
+- `tools/` — station model, relay envelope, BLE JavaScript layer and message signing copied from the app; tests: `node tools/stations-selftest.mjs` and `node tools/signing-selftest.mjs`.
+- `tools/RisesBleBridge.java` — the Android BLE bridge source (advertising, scanning, GATT server/client), included for review; it is not part of this JVM build.
 - `src/main/java` — standalone experimental router, framing, and identity-verification components.
 - `experiments/identity/issuer-lab.mjs` — a dependency-injected example issuer, **not a deployed service**.
 - `test-vectors/` — a synthetic packet vector, not encrypted content.
