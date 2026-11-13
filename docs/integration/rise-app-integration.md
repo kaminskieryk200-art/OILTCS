@@ -1,4 +1,4 @@
-# Integration notes — what Rises actually implements today (v3.42.0)
+# Integration notes — what Rises actually implements today (v3.43.0)
 
 Status: **implementation report for the prototype document.** This describes code that exists and has been built into a signed Android package, and it separates clearly what was tested and where. It is not a standard, not an audit, and not a claim of production readiness.
 
@@ -119,25 +119,29 @@ Requested: encrypt and protect the message, but not with a password — with a w
 
 **Limits.** The private key sits in app storage, so an unlocked phone is a compromised phone. If the sender has no public key for the recipient, the message travels **in plaintext (still signed)** and is counted as such. The watermark identifies a leak; it does not prevent one. The key exchange has no forward secrecy: one long-lived key pair per device, no ratcheting, no key rotation.
 
-## Offline chats inside the normal chat screen (v3.42.0)
+## OILTCS under the normal interface (v3.43.0)
 
-Reported by the user: with no Internet the chat list is empty, so there is nowhere to type. The list came from the server; nothing was kept locally.
+Two earlier answers were rejected by the user, in this order:
 
-v3.41.0 answered that with a **separate view** (own screen, a floating “Czaty offline (N)” button, its own “+” picker). The user rejected that shape: *“make it all work properly, without other views.”* A second interface for the same thing is also a second place for the two to disagree — and the local list did not know the history that was already on the server.
+1. v3.41.0 — a separate offline chat view (own screen, floating “Czaty offline (N)” button). Rejected: *“make it all work properly, without other views.”*
+2. v3.42.0 — rows and a conversation panel injected next to the app's list. Rejected again, with a screenshot: *“it must be the same chat window, not another one; when the internet goes away I have the normal interface, but calls and messages go through OILTCS.”*
 
-v3.42.0 therefore removes the separate view (`tools/rise-offline-chats.js` is gone) and moves the whole thing into the screens the app already has. `tools/rise-native-chat.js`:
+v3.43.0 takes that literally: **the module draws nothing at all.** `tools/rise-native-chat.js` registers `RISE_OFFLINE_CHAT`, and `tools/patch-native-chat.py` wires it into six places inside the app bundle, so the app's own screens are the only screens:
 
-- **Local mirror.** On every start (and every 45 s while visible) it pulls the last 300 messages of the account from `messages` and the public directory from `profiles`, and keeps them on the device (`rise-oiltcs-chats-v1`). The mirror starts with whatever history exists, so a chat is not shorter than on the server any more.
-- **Rows in the real list.** Threads are rendered as `.contact-item` rows in a container placed directly after the app's `.contacts-list` — the same visual list, but outside React's tree, so React re-renders cannot delete our nodes and we cannot corrupt its virtual DOM.
-- **Search.** The app's own chat search now also filters our rows (one extra call in the bundle), and typing in the search bar re-filters them.
-- **The thread opens in place.** No overlay: the conversation is an absolutely positioned panel inside `.screen-content`, so the tab bar stays where it is and “back” returns to the list.
-- **Sending, in order:** the app's own input field when a native conversation is open (the message is then a normal app message, with the app's encryption, signature, queue and radio) → the REST insert into `messages` (so the other side sees it in its normal list) → the radio/OILTCS path → the queue with the status `czeka na zasięg`.
-- **The queue drains itself.** On the `online` event and every 6 s while the app is visible, everything marked `czeka na zasięg` is pushed to the server. No button, no question.
-- **Truthful status.** A failed network attempt starts a 20 s cool-down instead of hammering the server, and `navigator.onLine` is never trusted as the only signal — a Wi-Fi network without Internet reports “online”, so the send is attempted and the failure is what decides.
+| Where | What the patch does |
+| --- | --- |
+| chat send (`fn`) | keeps the normal server write; the same text also goes to `RISE_OFFLINE_CHAT.offer(peer, text)` — the radio path, which queues when nothing is audible |
+| failed/queued write | calls `offer()` too, so a message that the server did not accept still leaves over OILTCS |
+| confirmed write | `remember()` — the message is kept on the device, so it survives a restart and appears in the same thread later |
+| chat list (`zn`) | `merge()` appends only the people the app does not already have, with the name and avatar from `profiles` and the last message as the preview |
+| conversation header (`Bn`) | `person(id)` supplies the header for someone who is not in the server directory, instead of the generic “Chat Partner” |
+| bridge effect | `useBridge({current, setMessages, renderList, myId})` gives the module read access to the open conversation and the ability to append, so an incoming radio message lands in the very same thread |
 
-`node tools/native-chat-selftest.mjs` → 13 checks (headless DOM, no Android, no radio): rows appear in the existing list, no separate screen is created, history from the server lands in the device mirror, the thread opens in place, a message sent while offline goes out over the radio and stays in the conversation, a message sent with neither network nor radio waits and then sends itself when the network returns, an incoming radio message joins the same thread, the native input field is used when a real conversation is open, and nothing is duplicated.
+The patch is strict: each anchor must occur exactly once, otherwise it prints what it could not find and writes nothing. It is idempotent (a guard comment stops a second pass), and `tools/patch-native-chat-selftest.mjs` runs it on a fixture bundle, checks the patched output parses, checks the refusal path, and then executes the patched code against a stub module to confirm the send path really calls `offer()`/`remember()` and the list really calls `merge()`.
 
-**Limits.** The bundle is patched textually (search filter, one status label, version string), so a future rebuild of the app can move those anchors — the module itself does not depend on them. Rows for people who are not in the directory yet are labelled from their identifier. Ciphertext from the app's own ECDH format is shown as “🔒 Wiadomość zaszyfrowana”, not decrypted: the plaintext copy is not stored on the server by design. Nothing here has been run on a real phone, and the radio path is still unverified on hardware.
+`node tools/native-chat-selftest.mjs` → 29 checks, including “the module creates no element on the screen” and “it appends an incoming radio message to the open conversation”. `node tools/patch-native-chat-selftest.mjs` → 11 checks.
+
+**Limits, stated plainly.** The bundle is minified application code that I do not have the sources for; the patch targets exact strings, so any rebuild of the app can move them — the patch then refuses to run instead of corrupting the file, and the six strings have to be re-derived. Radio delivery is still unverified on hardware, and nothing here has been run on a physical phone. Local history is a mirror of the last 300 server messages plus everything that went through OILTCS; it is not a full archive. Ciphertext in the app's own `ecdh-v1` format is shown as “🔒 Wiadomość zaszyfrowana”, not decrypted, because the plaintext is not on the server by design.
 
 ## Honest summary
 

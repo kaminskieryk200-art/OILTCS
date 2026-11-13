@@ -18,7 +18,7 @@ A Rises build now selects the local path automatically when Internet connectivit
 - [Security and identity](docs/SECURITY-AND-IDENTITY.md) — threat model and proposed, incomplete account-key verification.
 - [Architecture and roadmap](docs/ARCHITECTURE.md) — layers, lifecycle, limitations, and remaining work.
 - [Integration notes: Rises v3.35.0](docs/integration/rise-app-integration.md) — what the app implements, what was verified, and what is untested.
-- `tools/` — station model, relay envelope, BLE JavaScript layer and message signing copied from the app; tests: `node tools/stations-selftest.mjs`, `node tools/signing-selftest.mjs`, `node tools/verify-selftest.mjs`, `node tools/distance-verify-selftest.mjs`, `node tools/encryption-selftest.mjs`, `node tools/native-chat-selftest.mjs`.
+- `tools/` — station model, relay envelope, BLE JavaScript layer and message signing copied from the app; tests: `node tools/stations-selftest.mjs`, `node tools/signing-selftest.mjs`, `node tools/verify-selftest.mjs`, `node tools/distance-verify-selftest.mjs`, `node tools/encryption-selftest.mjs`, `node tools/native-chat-selftest.mjs`, `node tools/patch-native-chat-selftest.mjs`.
 - `tools/RisesBleBridge.java` — the Android BLE bridge source (advertising, scanning, GATT server/client), included for review; it is not part of this JVM build.
 - `src/main/java` — standalone experimental router, framing, and identity-verification components.
 - `experiments/identity/issuer-lab.mjs` — a dependency-injected example issuer, **not a deployed service**.

@@ -1,11 +1,10 @@
-// Test referencyjny: czaty bez internetu w zwykłych czatach (v3.42.0).
+// Test referencyjny: OILTCS pod zwykłym interfejsem, bez własnego okna (v3.43.0).
 // Uruchomienie: node tools/native-chat-selftest.mjs
 //
-// Nie ma tu Androida, radia ani prawdziwych kont — jest drzewo DOM (te same
-// klasy, których używa aplikacja) i atrapa serwera. Sprawdzamy zachowanie
-// modułu, nie wygląd: czy rozmowy są w istniejącej liście, czy historia
-// z serwera trafia do pamięci telefonu, czy wiadomość bez zasięgu czeka
-// i wysyła się sama, i czy nic nie tworzy drugiego interfejsu.
+// Nie ma tu Androida, radia ani prawdziwych kont. Sprawdzamy zachowanie modułu:
+// czy nie tworzy żadnego widoku, czy dopisuje osoby do natywnej listy, czy
+// wiadomość bez zasięgu idzie radiem i kolejką, czy kolejka wysyła się sama
+// i czy to, co przyszło radiem, trafia do tej samej rozmowy w aplikacji.
 import fs from 'node:fs';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
@@ -17,158 +16,34 @@ function check(name, ok, detail) {
   else { failed++; console.log('FAIL ' + name + (detail ? ' -> ' + detail : '')); }
 }
 
-/* --- minimalne drzewo DOM: tyle, ile moduł naprawdę używa --- */
-function makeDom() {
-  function node(tag) {
-    const n = {
-      tagName: String(tag || 'div').toUpperCase(), className: '', style: {}, dataset: {},
-      childNodes: [], parentNode: null, attrs: {}, _text: '', value: '', type: '',
-      set textContent(v) { this._text = String(v); this.childNodes = []; },
-      get textContent() { return this._text + this.childNodes.map((c) => c.textContent).join(' '); },
-      setAttribute(k, v) { this.attrs[k] = String(v); },
-      getAttribute(k) { return this.attrs[k] === undefined ? null : this.attrs[k]; },
-      appendChild(c) { c.parentNode = this; this.childNodes.push(c); return c; },
-      insertBefore(c, ref) {
-        c.parentNode = this;
-        const i = this.childNodes.indexOf(ref);
-        if (i < 0) this.childNodes.push(c); else this.childNodes.splice(i, 0, c);
-        return c;
-      },
-      removeChild(c) {
-        const i = this.childNodes.indexOf(c);
-        if (i >= 0) this.childNodes.splice(i, 1);
-        return c;
-      },
-      addEventListener() {}, removeEventListener() {}, focus() {}, click() {},
-      dispatchEvent() { return true; }, requestSubmit() {},
-      closest(sel) { return this._matches(sel) ? this : (this.parentNode && this.parentNode.closest ? this.parentNode.closest(sel) : null); },
-      querySelectorAll(sel) { return findAll(this, sel); },
-      querySelector(sel) { return findAll(this, sel)[0] || null; },
-      _matches(sel) {
-        const want = String(sel).trim();
-        const compound2 = /^([a-zA-Z]+)\.([\w-]+)$/.exec(want);
-        if (compound2) {
-          return this.tagName === compound2[1].toUpperCase() && (' ' + this.className + ' ').indexOf(' ' + compound2[2] + ' ') >= 0;
-        }
-        const compound = /^([a-zA-Z]+)\[([^\]]+)\]$/.exec(want);
-        if (compound) {
-          return this.tagName === compound[1].toUpperCase() && this._matches('[' + compound[2] + ']');
-        }
-        if (want.startsWith('.')) return (' ' + this.className + ' ').indexOf(' ' + want.slice(1) + ' ') >= 0;
-        if (want.startsWith('[')) {
-          const m = /^\[([^=\]]+)(?:="([^"]*)")?\]$/.exec(want);
-          if (!m) return false;
-          if (!(m[1] in this.attrs)) return false;
-          return m[2] === undefined || this.attrs[m[1]] === m[2];
-        }
-        return this.tagName === want.toUpperCase();
-      }
-    };
-    n.setAttribute = (function (orig) {
-      return function (k, v) {
-        orig.call(n, k, v);
-        if (k === 'class') n.className = String(v);
-        if (k === 'type') n.type = String(v);
-        if (k === 'src') n.src = String(v);
-      };
-    })(n.setAttribute);
-    /* prototyp: imitacja HTMLInputElement.prototype (aplikacja używa wartości setera) */
-    Object.defineProperty(n, 'value', {
-      get() { return this._value || ''; },
-      set(v) { this._value = String(v); },
-      configurable: true
-    });
-    return n;
-  }
-  function findAll(root, sel) {
-    const text = String(sel).trim();
-    if (text.indexOf(',') >= 0) {
-      const seen = new Set();
-      const out = [];
-      text.split(',').forEach((part) => {
-        findAll(root, part.trim()).forEach((n) => { if (!seen.has(n)) { seen.add(n); out.push(n); } });
-      });
-      return out;
-    }
-    const out = [];
-    const parts = String(sel).trim().split(/\s+/);
-    const walk = (n) => {
-      n.childNodes.forEach((c) => {
-        if (matchesChain(c, parts)) out.push(c);
-        walk(c);
-      });
-    };
-    walk(root);
-    return out;
-  }
-  function matchesChain(n, parts) {
-    let i = parts.length - 1;
-    let cur = n;
-    while (i >= 0) {
-      if (!cur || !cur._matches) return false;
-      if (cur._matches(parts[i])) { i--; cur = cur.parentNode; }
-      else if (i === parts.length - 1) return false;
-      else cur = cur.parentNode;
-    }
-    return true;
-  }
-  return { node, findAll };
+function jwt(sub) {
+  const b = (o) => Buffer.from(JSON.stringify(o)).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+  return b({ alg: 'HS256' }) + '.' + b({ sub, exp: Math.floor(Date.now() / 1000) + 3600 }) + '.x';
 }
 
-function makePhone(opts = {}) {
-  const { node, findAll } = makeDom();
-  const body = node('body');
-  const head = node('head');
-  const phoneScreen = node('div'); phoneScreen.className = 'phone-screen';
-  const screenContent = node('div'); screenContent.className = 'screen-content';
-  const tabView = node('div'); tabView.className = 'tab-view chats-tab';
-  const tabHeader = node('div'); tabHeader.className = 'tab-header';
-  const list = node('div'); list.className = 'contacts-list';
-  tabView.appendChild(tabHeader); tabView.appendChild(list);
-  screenContent.appendChild(tabView);
-  phoneScreen.appendChild(screenContent);
-  body.appendChild(phoneScreen);
-
-  if (!opts.noKeyInPage) {
-    const cfgScript = node('script');
-    cfgScript.textContent = 'var cfg={key:\`sb_publishable_wZDLcF79U5_urQcXmUneOw_eykEZ5Sb\`};';
-    head.appendChild(cfgScript);
-  }
-
-  const searchInput = node('input');
-  searchInput.type = 'text'; searchInput.className = 'search-input';
-  tabHeader.appendChild(searchInput);
-
-  const doc = {
-    readyState: 'complete', title: '', body, head,
-    createElement: (t) => node(t),
-    documentElement: body,
-    querySelector: (s) => (s === '.contacts-list' ? list : findAll(body, s)[0] || findAll(head, s)[0] || null),
-    querySelectorAll: (s) => findAll(body, s).concat(findAll(head, s)),
-    addEventListener() {}, removeEventListener() {}, visibilityState: 'visible'
-  };
-  /* nasze własne selektory (moduł szuka po klasach i atrybutach) */
-  const origQuery = doc.querySelector;
-  doc.querySelector = (s) => {
-    if (s === '.search-bar input[type="text"]') return searchInput;
-    const m = /^\[data-rise-msglist="(.*)"\]$/.exec(s);
-    if (m) return findAll(body, '[data-rise-msglist]').filter((n) => n.attrs['data-rise-msglist'] === m[1])[0] || null;
-    return origQuery(s);
-  };
-
+/* Telefon: pamięć, strona (do odczytu klucza z bundla), atrapa serwera i radia.
+ * `created` liczy, ile elementów moduł próbował utworzyć — musi być zero. */
+function phone(opts = {}) {
   const ls = Object.assign({}, opts.storage || {});
   const listeners = {};
   const requests = [];
+  const created = [];
+  const defaultScripts = [{ text: 'var cfg={key:`sb_publishable_wZDLcF79U5_urQcXmUneOw_eykEZ5Sb`};' }];
+  const scripts = (opts.scripts || defaultScripts).map((s) => ({
+    src: s.src || '',
+    textContent: s.text || '',
+    getAttribute(k) { return k === 'src' ? (s.src || '') : null; }
+  }));
+  let clock = 0;
 
   const ctx = {
     crypto: { subtle: crypto.webcrypto.subtle, getRandomValues: (a) => crypto.webcrypto.getRandomValues(a) },
     TextEncoder, TextDecoder, Uint8Array, Promise, JSON, Math, Date, String, Number, Object, Array, Error,
     atob: (s) => Buffer.from(s, 'base64').toString('binary'),
     btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
-    document: doc,
     navigator: { onLine: opts.online !== false },
-    URLSearchParams,
-    Event: function (t) { this.type = t; },
+    location: { href: 'https://localhost/' },
+    URL, URLSearchParams,
     CustomEvent: function (t, o) { this.type = t; this.detail = o && o.detail; },
     setTimeout: (fn) => { try { fn(); } catch (e) {} return 0; },
     clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {},
@@ -178,6 +53,13 @@ function makePhone(opts = {}) {
       removeItem: (k) => { delete ls[k]; },
       get length() { return Object.keys(ls).length; },
       key: (i) => Object.keys(ls)[i] || null
+    },
+    document: {
+      readyState: 'complete', visibilityState: 'visible',
+      querySelectorAll: (sel) => (String(sel).indexOf('script') >= 0 ? scripts : []),
+      querySelector: () => null,
+      createElement: (t) => { created.push(t); return { style: {}, appendChild() {}, setAttribute() {} }; },
+      addEventListener() {}, body: null, head: null
     }
   };
   ctx.window = ctx;
@@ -193,151 +75,129 @@ function makePhone(opts = {}) {
     if (String(url).indexOf('/profiles') >= 0) {
       return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(opts.directory || [])) });
     }
+    if (String(url).indexOf('index-') >= 0 && !String(url).includes('/rest/')) {
+      return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(opts.bundle || '') });
+    }
     return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(opts.history || [])) });
   };
-  if (opts.radio) ctx.window.RISE_AUTO_OILTCS = { nodeId: () => 'node-test', relay: opts.radio };
-  return { ctx, doc, list, tabView, screenContent, searchInput, ls, listeners, requests, findAll, body };
+  if (opts.radio) {
+    ctx.window.RISE_AUTO_OILTCS = { nodeId: () => 'node-test', relay: opts.radio };
+  }
+  vm.createContext(ctx);
+  vm.runInContext(SRC, ctx);
+  /* tak samo jak aplikacja: most woła boot() przy pierwszym renderze */
+  ctx.window.RISE_OFFLINE_CHAT.boot();
+  return { ctx, ls, listeners, requests, created, api: ctx.window.RISE_OFFLINE_CHAT };
 }
 
-function jwt(sub) {
-  const b = (o) => Buffer.from(JSON.stringify(o)).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
-  return b({ alg: 'HS256' }) + '.' + b({ sub, exp: Math.floor(Date.now() / 1000) + 3600 }) + '.x';
-}
-
-function load(phone) {
-  vm.createContext(phone.ctx);
-  vm.runInContext(SRC, phone.ctx);
-  return phone.ctx.window.RISE_NATIVE_CHAT;
-}
-
-/* ===================================================================== */
 const ME = 'me-1';
 const PEER = 'peer-1';
 const auth = { 'sb-zxmnhbkqhupoaaocwzhw-auth-token': JSON.stringify({ access_token: jwt(ME) }) };
-
 const history = [
   { id: 'h1', sender_id: ME, receiver_id: PEER, text: 'starsza wiadomość z serwera', type: 'text', created_at: new Date(Date.now() - 7200000).toISOString() },
   { id: 'h2', sender_id: PEER, receiver_id: ME, text: 'odpowiedź z serwera', type: 'text', created_at: new Date(Date.now() - 3600000).toISOString() }
 ];
-const directory = [{ id: PEER, username: 'Kaminski', avatar_class: 'avatar-blue' }];
-
-/* --- 1. historia z serwera i wiersze w istniejącej liście --- */
-const p1 = makePhone({ history, directory, storage: auth });
-const NC1 = load(p1);
-check('zna konto z sesji', NC1.myId() === ME, NC1.myId());
-check('nośnik wiadomości nie jest pusty (mimo braku localStorage())', typeof NC1.thread === 'function');
+const directory = [{ id: PEER, username: 'Kaminski', avatar_class: 'avatar-blue', status: 'Aktywny' }];
 
 (async () => {
-  await NC1.syncDirectory();
-  await NC1.syncFromServer();
-  NC1.render();
+  /* --- 1. żadnego własnego widoku --- */
+  const p1 = phone({ storage: auth, history, directory });
+  await p1.api.syncDirectory();
+  await p1.api.syncFromServer();
+  p1.api.refresh();
+  check('moduł nie tworzy żadnego elementu na ekranie', p1.created.length === 0, 'utworzył: ' + p1.created.join(','));
+  check('nie ma klasy własnego okna w kodzie', !/rise-chat|rise-thread-row|rise-input-bar/.test(SRC));
 
-  const rows = p1.findAll(p1.body, '[data-rise-thread]');
-  check('wiersz rozmowy w istniejącej liście', rows.length === 1, 'wierszy: ' + rows.length);
-  check('wiersz wygląda jak natywny (.contact-item)', rows[0] && rows[0].className.indexOf('contact-item') >= 0);
-  check('wiersze poza drzewem listy React-a (osobny kontener)', p1.findAll(p1.list, '[data-rise-thread]').length === 0);
-  check('nazwa z katalogu osób', p1.findAll(p1.body, '.rise-thread-rows')[0].textContent.indexOf('Kaminski') >= 0);
-  check('historia z serwera jest w pamięci telefonu', NC1.thread(PEER) && NC1.thread(PEER).msgs.length === 2,
-    NC1.thread(PEER) ? 'wiadomości: ' + NC1.thread(PEER).msgs.length : 'brak');
-  check('nie ma drugiego ekranu', p1.findAll(p1.body, '.rise-chat').length === 0);
-  check('nie ma przycisku „Czaty offline"', p1.body.textContent.indexOf('Czaty offline') < 0);
+  /* --- 2. historia z serwera jest w pamięci telefonu --- */
+  const t1 = p1.api.thread(PEER);
+  check('rozmowa z serwera w pamięci', !!t1 && t1.msgs.length === 2, t1 ? 'wiadomości: ' + t1.msgs.length : 'brak');
 
-  /* --- 2. rozmowa otwiera się w miejscu listy --- */
-  NC1.open(PEER);
-  check('rozmowa jest w treści zakładki', p1.findAll(p1.screenContent, '.rise-chat').length === 1);
-  check('widać historię w rozmowie', p1.findAll(p1.body, '.rise-bubble').length >= 2);
-  const form = p1.findAll(p1.body, '.rise-input-bar')[0];
-  const input = p1.findAll(p1.body, '.rise-input')[0];
-  check('jest pole do pisania', !!form && !!input);
+  /* --- 3. lista czatów: dopisujemy tylko brakujące osoby --- */
+  const nativeList = [{ id: 'personal_notes', name: 'My Notepad' }, { id: 'other', name: 'Ktoś inny' }];
+  const merged = p1.api.merge(nativeList, directory);
+  check('lista bez duplikatów', merged.filter((e) => e.id === PEER).length === 1);
+  const added = merged.find((e) => e.id === PEER);
+  check('osoba z OILTCS jest na liście', !!added);
+  check('z nazwą z katalogu', added && added.name === 'Kaminski', added && added.name);
+  check('z podglądem ostatniej wiadomości', added && /odpowiedź z serwera/.test(added.status), added && added.status);
+  check('natywne wpisy zostają nietknięte', merged.slice(0, 2).every((e, i) => e.id === nativeList[i].id));
+  const merged2 = p1.api.merge(merged, directory);
+  check('drugie scalenie nie dubluje', merged2.length === merged.length, merged2.length + ' vs ' + merged.length);
 
-  /* --- 3. wysyłka bez internetu i bez radia: czeka, potem sama --- */
-  const p2 = makePhone({ history, directory, storage: auth, offline: true });
-  const NC2 = load(p2);
-  await NC2.syncFromServer();
-  const how = await NC2.deliver(PEER, 'piszę bez zasięgu', 'Kaminski');
-  check('bez sieci wiadomość trafia do kolejki', how === 'kolejka', how);
-  check('zostaje w rozmowie', NC2.thread(PEER).msgs.some((m) => m.text === 'piszę bez zasięgu'));
-  check('status „czeka na zasięg"', NC2.state().pending === 1, 'czeka: ' + NC2.state().pending);
+  /* --- 4. nagłówek rozmowy dla osoby spoza katalogu --- */
+  p1.api.mergeRows([{ id: 'x1', sender_id: 'ghost-1', receiver_id: ME, text: 'jestem spoza katalogu', type: 'text', created_at: new Date().toISOString() }]);
+  const ghost = p1.api.person('ghost-1');
+  check('osoba spoza katalogu ma nagłówek', !!ghost && ghost.id === 'ghost-1');
+  check('nazwa zamiast „Chat Partner"', ghost && ghost.name !== 'Chat Partner', ghost && ghost.name);
 
-  /* sieć wraca — bez przycisku */
-  p2.ctx.fetch = (url, init) => {
-    p2.requests.push({ url: String(url), init: init || {} });
+  /* --- 5. wysyłka bez internetu: radio --- */
+  const sentRadio = [];
+  const p2 = phone({ storage: auth, offline: true, radio: (from, to, text) => { sentRadio.push(text); return Promise.resolve(true); } });
+  await p2.api.syncFromServer();
+  const ok2 = await p2.api.offer(PEER, 'bez internetu, radiem');
+  check('radio dostało treść', sentRadio.indexOf('bez internetu, radiem') >= 0);
+  check('oznaczone jako wysłane radiem', p2.api.thread(PEER).msgs.some((m) => m.text === 'bez internetu, radiem' && m.st === 'radio'));
+
+  /* --- 6. bez radia i bez sieci: kolejka, potem samo --- */
+  const p3 = phone({ storage: auth, offline: true });
+  await p3.api.syncFromServer();
+  await p3.api.offer(PEER, 'czeka na zasięg');
+  check('trafiła do kolejki', p3.api.state().pending === 1, 'czeka: ' + p3.api.state().pending);
+  p3.ctx.fetch = (url, init) => {
+    p3.requests.push({ url: String(url), init: init || {} });
     const body = init && init.body ? JSON.parse(init.body) : null;
     if (init && init.method === 'POST') return Promise.resolve({ ok: true, status: 201, text: () => Promise.resolve(JSON.stringify([{ id: 'new-1', ...body }])) });
     return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('[]') });
   };
-  p2.ctx.window.dispatchEvent({ type: 'online' });
-  await new Promise((r) => setTimeout(r, 50));
-  check('kolejka opróżniona bez przycisku', NC2.state().pending === 0, 'czeka: ' + NC2.state().pending);
-  check('serwer dostał wiadomość', p2.requests.some((r) => r.init.method === 'POST' && r.init.body.indexOf('piszę bez zasięgu') >= 0));
+  p3.ctx.window.dispatchEvent({ type: 'online' });
+  await new Promise((r) => setTimeout(r, 40));
+  check('kolejka opróżniona bez przycisku', p3.api.state().pending === 0, 'czeka: ' + p3.api.state().pending);
+  check('serwer dostał wiadomość', p3.requests.some((r) => r.init.method === 'POST' && String(r.init.body).indexOf('czeka na zasięg') >= 0));
 
-  /* --- 4. radio: wiadomość dochodzi i ląduje w tej samej rozmowie --- */
-  const sentRadio = [];
-  const p3 = makePhone({ history, directory, storage: auth, offline: true, radio: (from, to, text) => { sentRadio.push(text); return Promise.resolve(true); } });
-  const NC3 = load(p3);
-  await NC3.syncFromServer();
-  const how3 = await NC3.deliver(PEER, 'przez radio', 'Kaminski');
-  check('bez sieci idzie radiem', how3 === 'radio', how3);
-  check('radio dostało treść', sentRadio.indexOf('przez radio') >= 0);
+  /* --- 7. potwierdzony zapis trafia do pamięci --- */
+  p3.api.remember(PEER, 'zapisane na serwerze', 'srv-9');
+  check('potwierdzona wiadomość jest w pamięci', p3.api.thread(PEER).msgs.some((m) => m.text === 'zapisane na serwerze' && m.st === 'server'));
+
+  /* --- 8. odbiór radiem + doklejenie do otwartej rozmowy --- */
+  const nativeState = { [PEER]: [] };
+  let renders = 0;
+  p3.api.useBridge({
+    current: () => PEER,
+    setMessages: (fn) => { Object.assign(nativeState, fn(nativeState)); },
+    renderList: () => { renders++; }
+  });
   p3.ctx.window.dispatchEvent(new p3.ctx.CustomEvent('rise-mesh-message', { detail: { from: PEER, text: 'odpowiedź radiem', at: Date.now() } }));
-  const t3 = NC3.thread(PEER);
-  check('odebrana radiem w tej samej rozmowie', t3.msgs.some((m) => m.text === 'odpowiedź radiem'));
-  check('jako odebrana, nie moja', t3.msgs[t3.msgs.length - 1].sender === 'them');
+  check('wiadomość z radia w tej samej rozmowie (pamięć)', p3.api.thread(PEER).msgs.some((m) => m.text === 'odpowiedź radiem'));
+  check('doklejona do otwartej rozmowy w aplikacji', nativeState[PEER].some((m) => m.text === 'odpowiedź radiem'));
+  check('jako wiadomość od drugiej osoby', nativeState[PEER].some((m) => m.text === 'odpowiedź radiem' && m.sender === 'them'));
+  check('lista odświeżona przez aplikację', renders >= 1);
+  const before = nativeState[PEER].length;
+  p3.api.syncConversation();
+  check('drugie doklejenie nic nie dubluje', nativeState[PEER].length === before, before + ' -> ' + nativeState[PEER].length);
 
-  /* --- 5. prawdziwe pole tekstowe aplikacji ma pierwszeństwo --- */
-  const formNative = p3.doc.createElement('form');
-  formNative.className = 'chat-input-bar';
-  const setholder = { v: '' };
-  const inputProto = {
-    get value() { return setholder.v; },
-    set value(x) { setholder.v = String(x); }
-  };
-  p3.ctx.HTMLInputElement = { prototype: inputProto };
-  p3.ctx.Event = function (t) { this.type = t; };
-  const nativeInput = p3.doc.createElement('input');
-  nativeInput.setAttribute('type', 'text');
-  const nativeBtn = p3.doc.createElement('button');
-  nativeBtn.setAttribute('class', 'send-btn');
-  let clicked = 0;
-  nativeBtn.click = () => { clicked++; };   /* tak samo: konkretny przycisk, nie prototyp */
-  formNative.appendChild(nativeInput); formNative.appendChild(nativeBtn);
-  p3.tabView.appendChild(formNative);
-  const beforeNative = NC3.thread(PEER).msgs.length;
-  p3.ctx.window.RISE_NATIVE_CHAT.deliver(PEER, 'przez pole aplikacji', 'Kaminski');
-  await new Promise((r) => setTimeout(r, 20));
-  check('pole aplikacji dostało treść', setholder.v === 'przez pole aplikacji', setholder.v);
-  check('przycisk aplikacji kliknięty', clicked >= 1);
-  check('wiadomość zapisana raz', NC3.thread(PEER).msgs.filter((m) => m.text === 'przez pole aplikacji').length === 1,
-    'wystąpień: ' + NC3.thread(PEER).msgs.filter((m) => m.text === 'pole aplikacji').length + '/' + beforeNative);
+  /* --- 9. wiadomość czekająca pokazuje się w rozmowie jako „czeka" --- */
+  p3.ctx.navigator.onLine = false;
+  p3.ctx.fetch = () => Promise.reject(new Error('offline'));
+  await p3.api.offer(PEER, 'jeszcze nie wyszła');
+  await p3.api.syncConversation();
+  const queued = nativeState[PEER].filter((m) => m.text === 'jeszcze nie wyszła');
+  check('oczekująca wiadomość jest w oknie czatu', queued.length === 1);
+  check('z etykietą „czeka na zasięg"', queued[0] && queued[0].localSendStatus === 'queued', queued[0] && queued[0].localSendStatus);
 
-  /* --- 6. brak duplikatów tej samej treści --- */
-  NC3.mergeRows([{ id: 'h2', sender_id: PEER, receiver_id: ME, text: 'odpowiedź z serwera', created_at: new Date().toISOString() }]);
-  check('ta sama wiadomość z serwera nie dubluje się', NC3.thread(PEER).msgs.filter((m) => m.text === 'odpowiedź z serwera').length === 1);
-
-  /* --- 7. szyfrogram nie udaje treści --- */
-  NC3.mergeRows([{ id: 'enc1', sender_id: PEER, receiver_id: ME, text: JSON.stringify({ version: 'ecdh-v1', iv: 'x', data: 'y' }), created_at: new Date().toISOString() }]);
-  check('zaszyfrowana wiadomość jest oznaczona, nie zmyślona', NC3.thread(PEER).msgs.some((m) => m.text.indexOf('🔒') === 0));
-
-  /* --- 8. klucz publiczny z bundla (tak wygląda prawdziwy APK) --- */
-  const p4 = makePhone({ storage: auth, noKeyInPage: true });
-  const NC4 = load(p4);
+  /* --- 10. klucz publiczny z bundla (tak wygląda prawdziwy APK) --- */
   const bundleKey = 'sb_publishable_wZDLcF79U5_urQcXmUneOw_eykEZ5Sb';
-  const bundleScript = p4.doc.createElement('script');
-  bundleScript.setAttribute('src', '/assets/index-C1jXfdpN.js');
-  p4.doc.body.appendChild(bundleScript);
-  p4.ctx.fetch = (url) => {
-    if (String(url).indexOf('index-') >= 0) {
-      return Promise.resolve({ ok: true, text: () => Promise.resolve('var cfg={key:`' + bundleKey + '`};') });
-    }
-    return Promise.resolve({ ok: true, text: () => Promise.resolve('[]') });
-  };
-  const gotKey = await NC4.ensureKey();
-  check('klucz publiczny czytany z bundla aplikacji', gotKey === bundleKey, gotKey.slice(0, 18));
-  check('klucz zostaje w pamięci telefonu (drugi start bez sieci)', p4.ls['rise-net-key'] === bundleKey);
-  const p5 = makePhone({ storage: Object.assign({}, auth, { 'rise-net-key': bundleKey }) });
-  const NC5 = load(p5);
+  const p4 = phone({ storage: auth, scripts: [{ src: '/assets/index-abc.js' }], bundle: 'var cfg={key:`' + bundleKey + '`};' });
+  check('klucz publiczny czytany z bundla', (await p4.api.ensureKey()) === bundleKey);
+  check('klucz zostaje w pamięci telefonu', p4.ls['rise-net-key'] === bundleKey);
+  const p5 = phone({ storage: Object.assign({}, auth, { 'rise-net-key': bundleKey }) });
   p5.ctx.fetch = () => Promise.reject(new Error('offline'));
-  check('drugi start nie potrzebuje już bundla', (await NC5.ensureKey()) === bundleKey);
+  check('drugi start nie potrzebuje bundla', (await p5.api.ensureKey()) === bundleKey);
+
+  /* --- 11. brak duplikatów i szyfrogram --- */
+  p1.api.mergeRows([{ id: 'h2', sender_id: PEER, receiver_id: ME, text: 'odpowiedź z serwera', created_at: new Date().toISOString() }]);
+  check('ta sama wiadomość z serwera nie dubluje się', p1.api.thread(PEER).msgs.filter((m) => m.text === 'odpowiedź z serwera').length === 1);
+  p1.api.mergeRows([{ id: 'enc1', sender_id: PEER, receiver_id: ME, text: JSON.stringify({ version: 'ecdh-v1', iv: 'x', data: 'y' }), created_at: new Date().toISOString() }]);
+  check('szyfrogram jest oznaczony, nie zmyślony', p1.api.thread(PEER).msgs.some((m) => m.text.indexOf('🔒') === 0));
 
   console.log('\n' + passed + ' OK, ' + failed + ' FAIL');
   process.exit(failed ? 1 : 0);
