@@ -714,7 +714,7 @@
 
     // 1) BLE: najbliższy obcy telefon z Rises — bez parowania, bez pytania
     var B = window.RISE_BLE;
-    if (B && B.state && B.state() === 'gra') {
+    if (B && B.has && B.has()) {
       var bliski = B.best(avoidAddress);
       if (bliski) {
         try {
@@ -879,7 +879,7 @@
       if (Date.now() > (item.expires || 0)) { state.queue.splice(i, 1); continue; }
       var poszlo = false;
       var B = window.RISE_BLE;
-      if (B && B.state && B.state() === 'gra') {
+      if (B && B.has && B.has()) {
         var bliski = B.best(null);
         if (bliski) {
           try {

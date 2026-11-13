@@ -2,7 +2,7 @@
 
 Status: **implementation report for the prototype document.** This describes code that exists and has been built into a signed Android package, and it separates clearly what was tested and where. It is not a standard, not an audit, and not a claim of production readiness.
 
-Written against Rises `v3.40.0` (versionCode 212), published 2026-11-02.
+Written against Rises `v3.41.0` (versionCode 213), published 2026-11-02.
 
 ## What changed in the reference implementation
 
@@ -118,6 +118,18 @@ Requested: encrypt and protect the message, but not with a password — with a w
 `node tools/encryption-selftest.mjs` → 13 checks: separate keys per device, both keys exchanged by QR, ciphertext on the wire with no plaintext, recipient reads, bystander does not, watermark round-trips without changing what a human sees, watermark valid only for its own pair, missing key = plaintext.
 
 **Limits.** The private key sits in app storage, so an unlocked phone is a compromised phone. If the sender has no public key for the recipient, the message travels **in plaintext (still signed)** and is counted as such. The watermark identifies a leak; it does not prevent one. The key exchange has no forward secrecy: one long-lived key pair per device, no ratcheting, no key rotation.
+
+## Offline chat list (v3.41.0)
+
+Reported by the user: with no Internet the chat list is empty, so there is nowhere to type. The list came from the server; nothing was kept locally.
+
+`tools/rise-offline-chats.js` keeps threads on the device (`rise-local-threads-v1`, 120 threads, 300 messages each) and provides a local chat list with per-message status (`wysłane` / `czeka na zasięg`), a “new conversation” picker limited to people the device already knows (confirmed by QR/safety code, vouched for, previously talked to, seen over BLE, or paired over classic Bluetooth), automatic routing of incoming messages into the right thread, a discreet “Czaty offline (N)” button when the server returned nothing while offline, and interception of the “+” button so it opens the local list instead of an empty screen.
+
+**A send-path bug was found while testing this:** relay and queue sending required the BLE module to report the full state `gra`; when the module existed but had not finished starting, the message silently stayed in the queue. The check now only requires the module to be present, and peer selection still verifies that someone is actually audible.
+
+`node tools/offline-chats-selftest.mjs` → 10 checks.
+
+**Limits:** this is a separate offline chat view, not a replacement of the app's native chat screen — its internal structure is not known, so the offline list is a view of its own. History from the server is **not** mirrored; a local thread starts at the first message sent or received offline.
 
 ## Honest summary
 
