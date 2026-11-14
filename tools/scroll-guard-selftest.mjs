@@ -133,8 +133,8 @@ function makeEnv({ coarse = true } = {}) {
   const css2 = env.styles.map((s) => s.textContent).join('\n');
   check('zakładka Czaty może się przewijać sama (jak Ustawienia i Profil)',
         css2.indexOf('.tab-view.chats-tab{') > 0);
-  check('nagłówek Czatów zostaje przyklejony u góry',
-        css2.indexOf('.tab-view.chats-tab>.tab-header{position:sticky') > 0);
+  check('moduł nie przypina i nie przemalowuje nagłówka (wiersze nie prześwitują)',
+        css2.indexOf('position:sticky') === -1 && css2.indexOf('tab-header{') === -1);
   check('lista czatów ma własne przewijanie palcem',
         css2.indexOf('.tab-view.chats-tab>.contacts-list{min-height:0;overflow-y:auto') > 0);
 }

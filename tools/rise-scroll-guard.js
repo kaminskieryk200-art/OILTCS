@@ -1,4 +1,4 @@
-/* Rises — przewijanie palcem (v3.43.2).
+/* Rises — przewijanie palcem (v3.43.3).
  *
  * Powód (zgłoszenie ze screena): „nie da się przewijać" oraz „masz tylko pasek
  * do przewijania jak na laptopie, ja jestem na telefonie".
@@ -26,6 +26,11 @@
  *    na liście (bez przeskakiwania na inne ekrany),
  *  - chowa pasek przewijania WYŁĄCZNIE na ekranie dotykowym — na komputerze
  *    zostaje normalny, bo tam jest potrzebny,
+ *  - nic nie przypina i nie przemalowuje. Wersja 3.43.2 przyklejała nagłówek
+ *    „Czaty" u góry i przez półprzezroczyste tło aplikacji wiersze prześwitywały
+ *    pod nim. Teraz nagłówek przewija się razem z listą — dokładnie tak, jak
+ *    już zachowują się zakładki Ustawienia i Profil. Zero nowych elementów
+ *    i zero zmiany wyglądu,
  *  - nie rusza niczego, dopóki palec jest na ekranie.
  */
 (function (root) {
@@ -72,9 +77,7 @@
       'overscroll-behavior:contain;scrollbar-width:none;-ms-overflow-style:none;' +
       'padding-bottom:calc(72px + env(safe-area-inset-bottom,8px))}' +
       '.tab-view.chats-tab::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}' +
-      /* nagłówek „Czaty" i wyszukiwarka zostają u góry, przewija się lista pod nimi */
-      '.tab-view.chats-tab>.tab-header{position:sticky;top:0;z-index:3;' +
-      'background:var(--bg-main,#f6f5f2);padding-top:calc(14px + env(safe-area-inset-top,24px))}' +
+
       '.tab-view.chats-tab>.contacts-list{min-height:0;overflow-y:auto;' +
       '-webkit-overflow-scrolling:touch;touch-action:pan-y!important;overscroll-behavior:contain}' +
       hideBar + '}';

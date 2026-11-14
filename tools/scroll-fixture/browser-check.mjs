@@ -1,9 +1,10 @@
-// Sprawdzenie w prawdziwej przeglądarce (v3.43.2).
+// Sprawdzenie w prawdziwej przeglądarce (v3.43.3).
 //
-// Po co: dwa wydania z rzędu twierdziły, że przewijanie naprawione, a użytkownik
-// dalej nie mógł przewinąć listy czatów. Ten test uruchamia Chromium w rozmiarze
-// telefonu, na prawdziwym arkuszu stylów aplikacji, i sprawdza, czy treść
-// naprawdę się przesuwa — a nie tylko, czy w CSS jest „ładna" właściwość.
+// Po co: dwa wydania z rzędu twierdziły, że przewijanie jest naprawione,
+// a użytkownik dalej nie mógł przewinąć listy czatów. Ten test uruchamia
+// Chromium w rozmiarze telefonu, na prawdziwym arkuszu stylów aplikacji,
+// i sprawdza, czy treść naprawdę się przesuwa — a nie tylko, czy w CSS jest
+// „ładna" właściwość.
 //
 // Wymaga: npm i playwright && npx playwright install chromium
 // Uruchomienie: node tools/scroll-fixture/browser-check.mjs
@@ -61,7 +62,7 @@ const ok = {
   'po: lista ma czym się przewijać': after.scroller !== null,
   'po: nic nie jest obcięte': after.clipped.length === 0,
   'po: kółko/palec rusza treść': after.scrolledBy !== 'brak ruchu',
-  'po: nagłówek zostaje u góry': after.headerAfter === before.headerAfter,
+  'po: nagłówek nie jest przyklejany (przewija się z listą)': after.headerPos === 'static',
   'po: brak paska przewijania': after.barDisplay === 'none' || after.barWidth === '0px'
 };
 for (const [k, v] of Object.entries(ok)) console.log((v ? 'OK   ' : 'FAIL ') + k);

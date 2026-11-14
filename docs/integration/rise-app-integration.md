@@ -1,4 +1,4 @@
-# Integration notes — what Rises actually implements today (v3.43.2)
+# Integration notes — what Rises actually implements today (v3.43.3)
 
 Status: **implementation report for the prototype document.** This describes code that exists and has been built into a signed Android package, and it separates clearly what was tested and where. It is not a standard, not an audit, and not a claim of production readiness.
 
@@ -185,8 +185,10 @@ Measured, before → after:
 | element that actually scrolls | none | `.tab-view.chats-tab` (2851 px inside 663 px) |
 | content clipped by `overflow:hidden` | `.screen-content.chats-content` | none |
 | scrollbar on the list | 8 px, visible | hidden |
-| header “Czaty” | static | sticky (stays on top while the list moves) |
+| header “Czaty” | static | static (scrolls away with the list — see 3.43.3) |
 | drag/wheel moves the content | no | yes |
+
+v3.43.2 additionally pinned the header with `position:sticky`, and the screenshot of the result showed the semi-transparent header sitting over the row underneath, with rows showing through it. v3.43.3 drops the pin: the header scrolls away with the list, exactly as it already does in Settings and Profile. Nothing is pinned and nothing is recoloured.
 
 The fix is three small things: the patch adds `chats-tab` to the app's own allow-list in the bundle, `rise-scroll-guard.js` pulls Chats into the same “whole tab scrolls” treatment Settings and Profile already get (and pins the header), and the earlier over-eager rules are kept so `min-height:0` applies to every list regardless of how tall it currently is.
 
