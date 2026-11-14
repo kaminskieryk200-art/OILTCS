@@ -1,4 +1,4 @@
-# Integration notes — what Rises actually implements today (v3.43.4)
+# Integration notes — what Rises actually implements today (v3.44.0)
 
 Status: **implementation report for the prototype document.** This describes code that exists and has been built into a signed Android package, and it separates clearly what was tested and where. It is not a standard, not an audit, and not a claim of production readiness.
 
@@ -219,6 +219,33 @@ The gesture that starts on a row is eaten before any scroller sees it. Rather th
 Verified with real touch: row-drag → list scrolls 280 px, header stays at the top, drag does not open a chat, tap does open one, reverse drag works. `node tools/scroll-guard-selftest.mjs` → 21 checks (including “horizontal gesture is not taken over”, “text field keeps its own movement”, “nothing moves while a finger is down”).
 
 **The honest limit:** this is Chromium's touch pipeline, not an Android WebView on the user's phone. It is the closest thing to a phone I have here, and it now reproduces and fixes the exact symptom the user reported — but the last word is still theirs.
+
+## Rises Spaces — public channels (v3.44.0)
+
+Requested as *“something like Rises Spaces, public channels like on Discord”*. Built so that `v3.42–v3.43` stays true: **no new screen.** A public channel is an ordinary group, so it opens in the same chat window — same header, same message list, same input, same Send button.
+
+Database (applied to the project, `tools/spaces/spaces-schema.sql` is the source of truth):
+
+| object | what it does |
+| --- | --- |
+| `spaces_channels` | marks a group as a public channel: slug, topic, `is_public`; RLS lets every signed-in user read public ones |
+| `group_members.gm_join_public` | any signed-in user may add **themselves** to a public channel (private groups keep the old owner-only rule) |
+| `rises_group_visible()` | a group that is a public channel is visible to everyone; private groups unchanged |
+| `messages` | **no schema change** — channel messages use the existing `group_id` path, so the app's own send, receive, reactions and realtime already work |
+
+`#ogólny` exists and is public.
+
+`rise-spaces.js` draws nothing. It adds five things through the bundle patch (`tools/spaces/patch-spaces.py`, five anchors, each must match exactly once):
+
+1. public channels appear in the chat list (`RISE_SPACES.merge(zn)`) — appended after the existing talks, never reordering them;
+2. tapping a channel joins it and loads its history (`RISE_SPACES.onOpen`) — the app only fetches messages for conversations you are a member of, so the module fetches the channel history itself and hands it to the app's own message setter;
+3. channels are not encrypted (`RISE_SPACES.plain(S)` guards the encrypt call) — a public channel should not show “🔒 Wiadomość zaszyfrowana” instead of text;
+4. the header shows the channel name (`RISE_SPACES.person(S)`);
+5. in a channel each bubble shows who wrote it (`RISE_SPACES.senderOf`), because in a group the avatar is the channel's.
+
+`node tools/spaces/spaces-selftest.mjs` → 23 checks: listed once, joins once, tap outside a channel does nothing, public not encrypted while normal chats stay encrypted, history lands in the same conversation without duplicates, ciphertext in a channel is not shown as scary “🔒”, header name, and “the module creates no element on screen”.
+
+**Limits, stated plainly.** Author names in a channel are resolved lazily from `profiles` — the name appears on later renders, not instantly on the first one. The channel list refreshes on start, on `online` and every 2 minutes. Nothing here was run on a physical phone.
 
 ## Honest summary
 

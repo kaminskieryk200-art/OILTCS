@@ -15,6 +15,7 @@ if command -v node >/dev/null; then
   node tools/distance-verify-selftest.mjs
   node tools/encryption-selftest.mjs
   node tools/native-chat-selftest.mjs
+  node tools/spaces/spaces-selftest.mjs
   node tools/patch-native-chat-selftest.mjs
   node tools/scroll-guard-selftest.mjs
 fi
