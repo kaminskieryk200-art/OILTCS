@@ -1,4 +1,4 @@
-/* Rises — przewijanie palcem (v3.43.3).
+/* Rises — przewijanie palcem (v3.43.4).
  *
  * Powód (zgłoszenie ze screena): „nie da się przewijać" oraz „masz tylko pasek
  * do przewijania jak na laptopie, ja jestem na telefonie".
@@ -37,7 +37,6 @@
   'use strict';
 
   var STYLE_ID = 'rise-scroll-touch';
-  var touch = false;
   var timer = null;
 
   var LISTS = [
@@ -71,15 +70,15 @@
       'html,body{touch-action:pan-y!important}' +
       SEL + '{min-height:0;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;' +
       'touch-action:pan-y!important;scrollbar-width:none;-ms-overflow-style:none}' +
-      /* zakładka czatów może się przewijać sama — tak jak Ustawienia i Profil */
-      '.tab-view.chats-tab{height:100%;min-height:0;overflow-y:auto;overflow-x:hidden;' +
-      '-webkit-overflow-scrolling:touch;touch-action:pan-y!important;' +
-      'overscroll-behavior:contain;scrollbar-width:none;-ms-overflow-style:none;' +
-      'padding-bottom:calc(72px + env(safe-area-inset-bottom,8px))}' +
-      '.tab-view.chats-tab::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}' +
-
-      '.tab-view.chats-tab>.contacts-list{min-height:0;overflow-y:auto;' +
-      '-webkit-overflow-scrolling:touch;touch-action:pan-y!important;overscroll-behavior:contain}' +
+      /* Lista czatów jest przewijana, nagłówek zostaje na swoim miejscu.
+         Wcześniej przewijaliśmy całą zakładkę i nagłówek uciekał z ekranu
+         („działa, ale tylko jak od paska"). Teraz przewija się sama lista,
+         dokładnie jak lista wiadomości w rozmowie. */
+      '.tab-view.chats-tab{display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden}' +
+      '.tab-view.chats-tab>.tab-header{flex:none}' +
+      '.tab-view.chats-tab>.contacts-list{flex:1 1 auto;min-height:0;overflow-y:auto;' +
+      'overflow-x:hidden;-webkit-overflow-scrolling:touch;touch-action:pan-y!important;' +
+      'overscroll-behavior:contain}' +
       hideBar + '}';
     head.appendChild(st);
   }
@@ -97,8 +96,98 @@
     return out;
   }
 
+  /* ------------------------------------------------------------------ */
+  /* przewijanie prowadzone palcem                                       */
+  /* ------------------------------------------------------------------ */
+  /* Dlaczego nie wystarczy CSS: na ekranie Czatów gest zaczęty NA WIERSZU
+     bywa zjadany przez reguły z innych modułów (zmierzone: natywne przewijanie
+     ruszało tylko wtedy, gdy palec startował na pustym pasku — „działa, ale
+     tylko jak od paska"). Skoro nie da się zagwarantować, że przeglądarka
+     wykona gest, prowadzimy go sami: przy ruchu w pionie przesuwamy `scrollTop`
+     dokładnie o drogę palca, a przeglądarce mówimy „nie ruszaj tego drugi raz".
+     Efekt jest ten sam co natywny, a działa niezależnie od cudzych stylów.
+
+     Nie ruszamy: pól tekstowych, gestów poziomych, przycisków (dotknięcie bez
+     ruchu zostaje dotknięciem) i modali. */
+  var drag = null;
+  var SUPPRESS_CLICK_UNTIL = 0;
+
+  var LIST_CLASSES = ['.contacts-list', '.messages-list', '.directory-list'];
+
+  function inList(el) {
+    var d = doc();
+    if (!d || !el || !el.closest) return false;
+    if (el.closest('input,textarea,select,[contenteditable="true"],[role="slider"]')) return false;
+    if (el.closest('.modal-content,.rs-sheet,.rs-community-modal,.chat-window,.rs-progress,.rm-progress,.tab-bar')) return false;
+    for (var i = 0; i < LIST_CLASSES.length; i++) if (el.closest(LIST_CLASSES[i])) return true;
+    return false;
+  }
+
+  /* Element, który naprawdę przewija: najbliższy przodek z przewijaniem w pionie,
+     a jeśli żaden nie ma czego przewijać — sama lista (dostanie własne przewijanie). */
+  function scrollerFor(el) {
+    var d = doc();
+    if (!d || !el) return null;
+    for (var n = el; n && n.nodeType === 1 && n !== d.body; n = n.parentElement) {
+      var s = null;
+      try { s = root.getComputedStyle(n); } catch (e) { s = null; }
+      if (!s) continue;
+      if (/auto|scroll/.test(s.overflowY) && n.scrollHeight > n.clientHeight + 4) return n;
+    }
+    for (var i = 0; i < LIST_CLASSES.length; i++) {
+      var hit = el.closest ? el.closest(LIST_CLASSES[i]) : null;
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  function onTouchStart(ev) {
+    drag = null;
+    touchDown = true;
+    if (!ev.touches || ev.touches.length !== 1) return;
+    var el = ev.target;
+    if (!inList(el)) return;
+    var box = scrollerFor(el);
+    if (!box) return;
+    var t = ev.touches[0];
+    drag = { x: t.clientX, y: t.clientY, top: box.scrollTop, box: box, engaged: false, moved: 0 };
+  }
+
+  function onTouchMove(ev) {
+    if (!drag || !ev.touches || ev.touches.length !== 1) return;
+    var t = ev.touches[0];
+    var dy = t.clientY - drag.y, dx = t.clientX - drag.x;
+    drag.moved = Math.max(drag.moved, Math.abs(dy) + Math.abs(dx));
+    if (!drag.engaged) {
+      if (Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx) * 1.2) drag.engaged = true;
+      else if (Math.abs(dx) > 8) { drag = null; return; }      /* poziomo — nie nasza sprawa */
+      else return;
+    }
+    if (ev.cancelable) ev.preventDefault();
+    drag.box.scrollTop = drag.top - dy;
+  }
+
+  function onTouchEnd() {
+    if (drag && drag.engaged && drag.moved > 10) SUPPRESS_CLICK_UNTIL = Date.now() + 200;
+    drag = null;
+    touchDown = false;
+    schedule();
+  }
+
+  /* Po przeciągnięciu przeglądarka potrafi jeszcze wysłać kliknięcie we wiersz —
+     wtedy zamiast przewijać, otworzylibyśmy rozmowę. Tłumimy tylko ten jeden. */
+  function onClickCapture(e) {
+    if (Date.now() < SUPPRESS_CLICK_UNTIL) {
+      SUPPRESS_CLICK_UNTIL = 0;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }
+
+  var touchDown = false;
+
   function sweep() {
-    if (touch) return;                 /* palec na ekranie: nie ruszamy układu */
+    if (touchDown) return;             /* palec na ekranie: nie ruszamy układu */
     var lists = scrollableLists();
     for (var i = 0; i < lists.length; i++) {
       var n = lists[i];
@@ -129,15 +218,19 @@
       setInterval(sweep, 2500);
     }
     if (d.addEventListener) {
-      d.addEventListener('touchstart', function () { touch = true; }, { passive: true, capture: true });
-      d.addEventListener('touchend', function () { touch = false; schedule(); }, { passive: true, capture: true });
-      d.addEventListener('touchcancel', function () { touch = false; }, { passive: true, capture: true });
+      d.addEventListener('touchstart', onTouchStart, { passive: true, capture: true });
+      d.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
+      d.addEventListener('touchend', onTouchEnd, { passive: true, capture: true });
+      d.addEventListener('touchcancel', onTouchEnd, { passive: true, capture: true });
+      d.addEventListener('click', onClickCapture, true);
     }
   }
 
   root.RISE_SCROLL = {
     boot: boot,
     sweep: sweep,
+    /* do testów: ile razy palec prowadził przewijanie */
+    dragged: function () { return SUPPRESS_CLICK_UNTIL > 0; },
     lists: function () { return scrollableLists().length; },
     isTouch: isTouch
   };

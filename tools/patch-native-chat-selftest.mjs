@@ -42,7 +42,7 @@ const patched = fs.readFileSync(good, 'utf8');
 check('łatka znalazła wszystkie miejsca', /6 miejsc|✓ most/.test(out1) && patched.includes('rise-oiltcs-bridge-v1'), out1.trim().split('\n').slice(-3).join(' | '));
 try { new vm.Script(patched); check('po załataniu plik jest poprawną składnią', true); }
 catch (e) { check('po załataniu plik jest poprawną składnią', false, e.message); }
-check('numer wersji podniesiony', /Xo = `v3\.43\.2`;/.test(patched));
+check('numer wersji podniesiony', /Xo = `v3\.43\.4`;/.test(patched));
 check('ekran Czatów dopuszczony w blokadzie przewijania',
       /classList\.contains\(`chats-tab`\)\|\|t\.classList\.contains\(`messages-list`\)/.test(patched));
 

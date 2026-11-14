@@ -1,4 +1,4 @@
-# Integration notes — what Rises actually implements today (v3.43.3)
+# Integration notes — what Rises actually implements today (v3.43.4)
 
 Status: **implementation report for the prototype document.** This describes code that exists and has been built into a signed Android package, and it separates clearly what was tested and where. It is not a standard, not an audit, and not a claim of production readiness.
 
@@ -195,6 +195,30 @@ The fix is three small things: the patch adds `chats-tab` to the app's own allow
 `node tools/scroll-guard-selftest.mjs` → 17 checks. `node tools/scroll-fixture/browser-check.mjs` → 7 checks in real Chromium. `native-chat-selftest` → 31, `patch-native-chat-selftest` → 12.
 
 **Still not a phone.** This is Chromium in a phone viewport on the app's own CSS, which is much closer than reading CSS by eye, but the Android WebView is a different build. If anything still sticks there, the next suspect is the same allow-list logic in the packed bundle.
+
+## “It works, but only from the bar” (v3.43.4)
+
+v3.43.3 made the Chats *tab* the scroller. The user's reply was precise and destroyed that answer: *“it works, but only from the bar”* — dragging from an empty strip near the bottom scrolled, dragging on a row did nothing.
+
+Measured again, this time with **real touch events** (CDP `Input.dispatchTouchEvent`, a finger pressed on a row and moved up):
+
+| start of the gesture | 3.43.3 | 3.43.4 |
+| --- | --- | --- |
+| on an empty strip inside the list | scrolls | scrolls |
+| **on a chat row** | **does not move** | scrolls (row → `scrollTop`) |
+| header | scrolls off the screen | stays |
+| tap on a row | opens the chat | opens the chat |
+
+The gesture that starts on a row is eaten before any scroller sees it. Rather than keep hunting through the CSS of a bundle I cannot rebuild, v3.43.4 stops depending on the browser for this one screen: `rise-scroll-guard.js` now drives the drag itself.
+
+- a finger pressed inside the chat list (or the message list) and moved vertically moves the list's `scrollTop` by exactly the distance travelled, with `preventDefault()` so the browser does not do it twice;
+- horizontal gestures, text fields and buttons are left alone — a tap with no movement still opens the chat;
+- the click a browser synthesises after a drag is suppressed for 200 ms, so a swipe never opens a conversation by accident;
+- on a computer none of this runs, and nothing at all is drawn: the module still creates no element on screen.
+
+Verified with real touch: row-drag → list scrolls 280 px, header stays at the top, drag does not open a chat, tap does open one, reverse drag works. `node tools/scroll-guard-selftest.mjs` → 21 checks (including “horizontal gesture is not taken over”, “text field keeps its own movement”, “nothing moves while a finger is down”).
+
+**The honest limit:** this is Chromium's touch pipeline, not an Android WebView on the user's phone. It is the closest thing to a phone I have here, and it now reproduces and fixes the exact symptom the user reported — but the last word is still theirs.
 
 ## Honest summary
 

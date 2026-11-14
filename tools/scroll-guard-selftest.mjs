@@ -32,21 +32,23 @@ function makeEnv({ coarse = true } = {}) {
   function addList(name, { content, visible }) {
     const el = {
       nodeType: 1, selName: name, scrollHeight: content, clientHeight: visible,
-      style: {}, attrs: {},
-      matches: (s) => SEL.indexOf(s) >= 0
+      scrollTop: 0, parentElement: null, style: {}, attrs: {},
+      matches: (s) => SEL.indexOf(s) >= 0,
+      closest: (sel) => (sel.split(',').map((x) => x.trim()).indexOf(name) >= 0 ? el : null)
     };
     lists.push(el);
     return el;
   }
 
   const stubs = {
-    console, setTimeout, clearTimeout, setInterval, String, Object, Array, Math, JSON,
+    console, setTimeout, clearTimeout, setInterval, String, Object, Array, Math, JSON, Date,
     navigator: { maxTouchPoints: coarse ? 5 : 0 },
     ontouchstart: coarse ? null : undefined,
     matchMedia: (q) => ({ matches: coarse && q.indexOf('coarse') >= 0 }),
     getComputedStyle: (n) => ({
       minHeight: n.style.minHeight || 'none',
-      touchAction: n.style.touchAction || 'none'
+      touchAction: n.style.touchAction || 'none',
+      overflowY: n.style.overflowY || 'auto'
     }),
     MutationObserver: function (cb) { this.observe = () => { observed = cb; }; },
     document: {
@@ -106,17 +108,26 @@ function makeEnv({ coarse = true } = {}) {
 /* --- 3. palec na ekranie: nie ruszamy układu --- */
 {
   const env = makeEnv({ coarse: true });
-  const long = env.addList('.contacts-list', { content: 3000, visible: 400 });
+  const list = env.addList('.contacts-list', { content: 3000, visible: 600 });
   vm.runInContext(SRC, env.ctx);
-  long.style = {};                       // „aplikacja przerysowała listę”
-  env.listeners.touchstart.forEach((fn) => fn());
+
+  // palec na ekranie, bez ruchu → moduł nie rusza układu
+  vm.runInContext("RISE_SCROLL", env.ctx);
+  env.listeners.touchstart.forEach((fn) => fn({ touches: [{ clientX: 10, clientY: 300 }], target: list }));
+  list.style = {};                        // „aplikacja przerysowała listę”
   vm.runInContext('RISE_SCROLL.sweep()', env.ctx);
-  check('przy trzymanym palcu moduł nie dotyka listy',
-        !long.style.minHeight, long.style.minHeight);
-  env.listeners.touchend.forEach((fn) => fn());
+  check('przy palcu na ekranie moduł nie dotyka listy', !list.style.minHeight, list.style.minHeight);
+
+  // palec jedzie w pionie → moduł prowadzi przewijanie sam
+  const before = list.scrollTop;
+  const move = { touches: [{ clientX: 12, clientY: 200 }], cancelable: true, preventDefault() { this.prevented = true; } };
+  env.listeners.touchmove.forEach((fn) => fn(move));
+  check('ruch palcem przewija listę (bez oglądania się na przeglądarkę)', list.scrollTop === before + 100, before + ' -> ' + list.scrollTop);
+  check('moduł przejmuje gest (przeglądarka nie przewinie drugi raz)', move.prevented === true);
+  env.listeners.touchend.forEach((fn) => fn({}));
   vm.runInContext('RISE_SCROLL.sweep()', env.ctx);
-  check('po podniesieniu palca lista znów się przewija',
-        long.style.minHeight === '0', long.style.minHeight);
+  check('po podniesieniu palca lista znów dostaje opiekę modułu',
+        list.style.minHeight === '0', list.style.minHeight);
 }
 
 /* --- 3b. lista, która UROSŁA do wysokości treści (przypadek ze zgłoszenia) --- */
@@ -134,9 +145,30 @@ function makeEnv({ coarse = true } = {}) {
   check('zakładka Czaty może się przewijać sama (jak Ustawienia i Profil)',
         css2.indexOf('.tab-view.chats-tab{') > 0);
   check('moduł nie przypina i nie przemalowuje nagłówka (wiersze nie prześwitują)',
-        css2.indexOf('position:sticky') === -1 && css2.indexOf('tab-header{') === -1);
-  check('lista czatów ma własne przewijanie palcem',
-        css2.indexOf('.tab-view.chats-tab>.contacts-list{min-height:0;overflow-y:auto') > 0);
+        css2.indexOf('position:sticky') === -1 &&
+        css2.indexOf('tab-header{flex:none}') > 0 &&
+        css2.indexOf('.tab-header{background') === -1);
+  check('lista czatów ma własne przewijanie palcem (a nie cała zakładka)',
+        /\.tab-view\.chats-tab>\.contacts-list\{[^}]*flex:1 1 auto[^}]*overflow-y:auto/.test(css2) &&
+        /\.tab-view\.chats-tab\{[^}]*overflow:hidden/.test(css2));
+}
+
+/* --- 3c. czego moduł NIE przejmuje --- */
+{
+  const env = makeEnv({ coarse: true });
+  const list = env.addList('.contacts-list', { content: 3000, visible: 600 });
+  vm.runInContext(SRC, env.ctx);
+
+  const horiz = { touches: [{ clientX: 120, clientY: 300 }], cancelable: true, preventDefault() { this.prevented = true; } };
+  env.listeners.touchstart.forEach((fn) => fn({ touches: [{ clientX: 10, clientY: 300 }], target: list }));
+  env.listeners.touchmove.forEach((fn) => fn(horiz));
+  check('gest poziomy nie jest przejmowany', horiz.prevented !== true && list.scrollTop === 0);
+
+  const input = { nodeType: 1, selName: 'input', closest: (sel) => (sel.indexOf('input') >= 0 ? input : null) };
+  const inField = { touches: [{ clientX: 10, clientY: 300 }], cancelable: true, preventDefault() { this.prevented = true; } };
+  env.listeners.touchstart.forEach((fn) => fn({ touches: [{ clientX: 10, clientY: 300 }], target: input }));
+  env.listeners.touchmove.forEach((fn) => fn(inField));
+  check('pole tekstowe zachowuje własne przesuwanie', inField.prevented !== true);
 }
 
 /* --- 4. żadnego własnego widoku --- */
