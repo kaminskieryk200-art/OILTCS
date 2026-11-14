@@ -28,6 +28,7 @@ fn=async(e,t=\`text\`)=>{let s=Sn.some(e=>e.id===S),c=S===\`personal_notes\`?d.u
 zn=[...v.filter(e=>e.id===\`personal_notes\`||bn.includes(e.id)||Rn.includes(e.id)),...Sn];
 Bn=v.find(e=>e.id===S)||Sn.find(e=>e.id===S)||(S?{id:S,name:\`Chat Partner\`,avatarClass:\`avatar-blue\`,online:!0,status:\`Active\`}:null);
 (0,_.useEffect)(()=>{gt.current=pe},[pe]);
+(0,_.useEffect)(()=>{let e=e=>{let t=e.target;for(;t&&t!==document.body;){if(t.classList&&(t.classList.contains(\`messages-list\`)||t.classList.contains(\`contacts-list\`)||t.tagName===\`INPUT\`))return;t=t.parentNode}e.cancelable&&e.preventDefault()};return document.addEventListener(\`touchmove\`,e,{passive:!1}),()=>{document.removeEventListener(\`touchmove\`,e)}},[]);
 `;
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rise-patch-'));
@@ -41,7 +42,9 @@ const patched = fs.readFileSync(good, 'utf8');
 check('łatka znalazła wszystkie miejsca', /6 miejsc|✓ most/.test(out1) && patched.includes('rise-oiltcs-bridge-v1'), out1.trim().split('\n').slice(-3).join(' | '));
 try { new vm.Script(patched); check('po załataniu plik jest poprawną składnią', true); }
 catch (e) { check('po załataniu plik jest poprawną składnią', false, e.message); }
-check('numer wersji podniesiony', /Xo = `v3\.43\.1`;/.test(patched));
+check('numer wersji podniesiony', /Xo = `v3\.43\.2`;/.test(patched));
+check('ekran Czatów dopuszczony w blokadzie przewijania',
+      /classList\.contains\(`chats-tab`\)\|\|t\.classList\.contains\(`messages-list`\)/.test(patched));
 
 /* 2. drugie uruchomienie nic nie psuje */
 execFileSync('python3', [PATCHER, good], { encoding: 'utf8' });

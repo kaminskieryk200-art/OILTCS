@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wstrzykuje OILTCS w istniejące funkcje aplikacji Rises (v3.43.1).
+"""Wstrzykuje OILTCS w istniejące funkcje aplikacji Rises (v3.43.2).
 
 Zasada: nie powstaje żaden nowy widok. Patch podmienia pięć miejsc w bundlu
 tak, żeby natywny interfejs korzystał z `tools/rise-native-chat.js`:
@@ -122,12 +122,28 @@ def main():
     m = re.search(r'Xo = `v(\d+)\.(\d+)\.(\d+)`;', src)
     if m:
         cur = tuple(int(x) for x in m.groups())
-        want = (3, 43, 1)
+        want = (3, 43, 2)
         if cur < want:
             src = src.replace(m.group(0), 'Xo = `v%d.%d.%d`;' % want, 1)
             print('  ✓ wersja: v%s -> v%d.%d.%d' % ('.'.join(m.groups()), *want))
     else:
         print('  ! nie znaleziono numeru wersji (Xo) — sprawdź ręcznie')
+
+    # --- 7. wbudowana blokada przewijania (v3.43.2) -----------------------
+    # Aplikacja ma nasłuch, który na każdym `touchmove` poza kilkoma listami
+    # woła `preventDefault()` — a listy czatów nie ma na jego liście wyjątków.
+    # Efekt: „nie da się przewijać" dokładnie na tym jednym ekranie.
+    # Zmiana: dopisujemy `chats-tab` do listy wyjątków, nic więcej.
+    anchor = "for(;t&&t!==document.body;){if(t.classList&&(t.classList.contains("
+    n = src.count(anchor)
+    if n != 1:
+        problems.append('blokada przewijania: znaleziono %d wystąpień (musi być 1)' % n)
+        print('  PRZERWANO — nic nie zapisano:')
+        for p_ in problems:
+            print('   - ' + p_)
+        return 1
+    src = src.replace(anchor, anchor + "`chats-tab`)||t.classList.contains(", 1)
+    print('  ✓ przewijanie: ekran Czatów dopuszczony (blokada touchmove)')
 
     if check_only:
         print('  (--check: bez zapisu)')

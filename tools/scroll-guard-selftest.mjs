@@ -1,4 +1,4 @@
-// Test „przewijanie palcem" (v3.43.1).
+// Test „przewijanie palcem" (v3.43.2).
 // Uruchomienie: node tools/scroll-guard-selftest.mjs
 //
 // Sprawdza na atrapie ekranu telefonu, że po zgłoszeniu „nie da się przewijać"
@@ -13,6 +13,9 @@ import vm from 'node:vm';
 
 const SRC = fs.readFileSync(new URL('./rise-scroll-guard.js', import.meta.url), 'utf8');
 const SEL = '.contacts-list,.messages-list,.profile-content,.settings-content,.directory-list,.modal-list,.tab-view,.settings-tab,.rs-clist,.rs-live-list,.rs-share-list,.rs-live-chat,.rm-body,.rs-ads-body,.rs-sheet-box,.rise-panel,.update-modal,.rs-invite-people';
+// Lista czatów bywa „zepsuta" nie tym, że nie ma co przewijać, tylko tym, że
+// urosła do wysokości treści (scrollHeight === clientHeight) i rodzic ją obciął.
+// Wersja 3.43.1 takie listy pomijała — stąd drugie zgłoszenie użytkownika.
 
 let passed = 0, failed = 0;
 function check(name, ok, detail) {
@@ -77,7 +80,9 @@ function makeEnv({ coarse = true } = {}) {
         long.style.touchAction === 'pan-y', long.style.touchAction);
   check('przewinięcie kończy się na liście (bez przeskoków na inne ekrany)',
         long.style.overscrollBehavior === 'contain');
-  check('krótkiej listy moduł nie rusza', !short.style.minHeight && !short.style.touchAction);
+  check('wysokość listy nie ma znaczenia — każda z rodziny dostaje to samo',
+        short.style.minHeight === '0' && short.style.touchAction === 'pan-y',
+        'minH=' + short.style.minHeight);
 
   const css = env.styles.map((s) => s.textContent).join('\n');
   check('pasek przewijania schowany tylko na ekranie dotykowym',
@@ -112,6 +117,26 @@ function makeEnv({ coarse = true } = {}) {
   vm.runInContext('RISE_SCROLL.sweep()', env.ctx);
   check('po podniesieniu palca lista znów się przewija',
         long.style.minHeight === '0', long.style.minHeight);
+}
+
+/* --- 3b. lista, która UROSŁA do wysokości treści (przypadek ze zgłoszenia) --- */
+{
+  const env = makeEnv({ coarse: true });
+  // lista ma 1800 px treści, ale sama też jest wysoka na 1800 px — bo rodzic jej
+  // na to pozwolił; dolne wiersze są obcięte przez rodzica z overflow:hidden.
+  const grown = env.addList('.contacts-list', { content: 1800, visible: 1800 });
+  vm.runInContext(SRC, env.ctx);
+  check('lista, która urosła do treści, też dostaje min-height:0 (3.43.1 ją pomijała)',
+        grown.style.minHeight === '0', 'minHeight=' + grown.style.minHeight);
+  check('i pozwolenie na ruch palcem', grown.style.touchAction === 'pan-y', grown.style.touchAction);
+
+  const css2 = env.styles.map((s) => s.textContent).join('\n');
+  check('zakładka Czaty może się przewijać sama (jak Ustawienia i Profil)',
+        css2.indexOf('.tab-view.chats-tab{') > 0);
+  check('nagłówek Czatów zostaje przyklejony u góry',
+        css2.indexOf('.tab-view.chats-tab>.tab-header{position:sticky') > 0);
+  check('lista czatów ma własne przewijanie palcem',
+        css2.indexOf('.tab-view.chats-tab>.contacts-list{min-height:0;overflow-y:auto') > 0);
 }
 
 /* --- 4. żadnego własnego widoku --- */

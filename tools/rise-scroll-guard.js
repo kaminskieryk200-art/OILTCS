@@ -1,4 +1,4 @@
-/* Rises — przewijanie palcem (v3.43.1).
+/* Rises — przewijanie palcem (v3.43.2).
  *
  * Powód (zgłoszenie ze screena): „nie da się przewijać" oraz „masz tylko pasek
  * do przewijania jak na laptopie, ja jestem na telefonie".
@@ -9,6 +9,16 @@
  * wiersze są obcięte i palec nie ma czego przesuwać. Wystarczy `min-height:0`.
  * Dodatkowo <html>/<body> mają `touch-action:none`, co przeglądarka stosuje
  * też do elementów w środku — trzeba wyraźnie pozwolić na ruch w pionie.
+ *
+ * Poprawka v3.43.2 (zgłoszenie: „dalej nie mogę przewijać"):
+ * wersja 3.43.1 naprawiała TYLKO listy, które już miały co przewijać
+ * (sprawdzała `scrollHeight > clientHeight`). A zepsuta lista to dokładnie ta
+ * odwrotność: urosła do wysokości swojej treści, więc formalnie „nie ma czego
+ * przewijać", a jej dolne wiersze są obcięte przez rodzica z `overflow:hidden`.
+ * Teraz `min-height:0` dostaje KAŻDA lista z tej rodziny, niezależnie od tego,
+ * jak wysoka jest w danej chwili. Do tego zakładka „Czaty" sama może się
+ * przewijać (tak jak już robią to Ustawienia i Profil), a nagłówek zostaje
+ * przyklejony u góry — więc jeśli jedna warstwa zawiedzie, zadziała druga.
  *
  * Ten moduł nie tworzy własnego interfejsu i nie zmienia wyglądu:
  *  - ustawia listom `min-height:0` tam, gdzie układ faktycznie je ściska,
@@ -56,20 +66,31 @@
       'html,body{touch-action:pan-y!important}' +
       SEL + '{min-height:0;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;' +
       'touch-action:pan-y!important;scrollbar-width:none;-ms-overflow-style:none}' +
+      /* zakładka czatów może się przewijać sama — tak jak Ustawienia i Profil */
+      '.tab-view.chats-tab{height:100%;min-height:0;overflow-y:auto;overflow-x:hidden;' +
+      '-webkit-overflow-scrolling:touch;touch-action:pan-y!important;' +
+      'overscroll-behavior:contain;scrollbar-width:none;-ms-overflow-style:none;' +
+      'padding-bottom:calc(72px + env(safe-area-inset-bottom,8px))}' +
+      '.tab-view.chats-tab::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}' +
+      /* nagłówek „Czaty" i wyszukiwarka zostają u góry, przewija się lista pod nimi */
+      '.tab-view.chats-tab>.tab-header{position:sticky;top:0;z-index:3;' +
+      'background:var(--bg-main,#f6f5f2);padding-top:calc(14px + env(safe-area-inset-top,24px))}' +
+      '.tab-view.chats-tab>.contacts-list{min-height:0;overflow-y:auto;' +
+      '-webkit-overflow-scrolling:touch;touch-action:pan-y!important;overscroll-behavior:contain}' +
       hideBar + '}';
     head.appendChild(st);
   }
 
-  /* Lista, która ma treść wyższą niż ona sama — czyli ta, którą trzeba przewijać. */
+  /* Wszystkie listy z rodziny — BEZ sprawdzania, czy „jest co przewijać".
+     Wersja 3.43.1 sprawdzała `scrollHeight > clientHeight` i właśnie dlatego
+     nie naprawiła listy czatów: zepsuta lista urosła do wysokości treści
+     i formalnie nie miała czego przewijać, choć jej dolne wiersze były obcięte. */
   function scrollableLists() {
     var d = doc();
     if (!d || !d.querySelectorAll) return [];
     var out = [];
     var nodes = d.querySelectorAll(SEL);
-    for (var i = 0; i < nodes.length; i++) {
-      var n = nodes[i];
-      if (n.scrollHeight > n.clientHeight + 4 && n.clientHeight > 80) out.push(n);
-    }
+    for (var i = 0; i < nodes.length; i++) out.push(nodes[i]);
     return out;
   }
 

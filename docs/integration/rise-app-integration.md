@@ -1,4 +1,4 @@
-# Integration notes — what Rises actually implements today (v3.43.1)
+# Integration notes — what Rises actually implements today (v3.43.2)
 
 Status: **implementation report for the prototype document.** This describes code that exists and has been built into a signed Android package, and it separates clearly what was tested and where. It is not a standard, not an audit, and not a claim of production readiness.
 
@@ -166,6 +166,33 @@ v3.43.1 changes exactly those five things and nothing about the layout:
 `node tools/scroll-guard-selftest.mjs` → 12 checks (long list becomes scrollable, short list untouched, scrollbar hidden on touch only, nothing moves while a finger is down, computer unchanged). `node tools/native-chat-selftest.mjs` → 31, `node tools/patch-native-chat-selftest.mjs` → 11.
 
 **Not verified on a real phone** — I have no device here, so this is derived from the shipped files, not from watching it scroll. If it still sticks, the next thing to suspect is the app's own scrolling code inside the bundle (`touchmove`, `scrollTop`, `deltaY` appear there).
+
+## The chat list would not scroll — the real cause (v3.43.2)
+
+v3.43.1 guessed. It added `min-height:0` and `touch-action:pan-y` to the obvious lists, and the list still would not move. So I stopped guessing and measured: a headless Chromium in a phone viewport, loading the app's real stylesheet, on a copy of the chats screen.
+
+What came out of the measurement (`tools/scroll-fixture/browser-check.mjs`, screenshots `przed.png` / `po.png`):
+
+1. **The app switches scrolling off on purpose.** `PhoneApp` registers a document-wide `touchmove` listener that calls `preventDefault()` unless the target is inside one of a dozen allowed lists — `messages-list`, `contacts-list`, `directory-list`, `profile-content`, `settings-content`, … **`chats-tab` is not on that list.** On the chat list the target is the list's container, so every drag was cancelled.
+2. **`html,body{touch-action:none}`** — on top of that, nothing inside could claim vertical movement.
+3. **The CSS already solves this for two other tabs.** There is a rule that makes Settings and Profile and Contacts scroll as a whole tab (`overflow-y:auto; touch-action:pan-y`) and flattens their inner lists. **Chats was left out of that rule.**
+4. **The list cannot do it alone:** `.contacts-list` is a block children of the tab, and with the browser's default alignment it stretches to the height of its content (2658 px measured) inside a 663 px tab. The tab must be the scroller.
+
+Measured, before → after:
+
+| | before (3.43.1) | after (3.43.2) |
+| --- | --- | --- |
+| element that actually scrolls | none | `.tab-view.chats-tab` (2851 px inside 663 px) |
+| content clipped by `overflow:hidden` | `.screen-content.chats-content` | none |
+| scrollbar on the list | 8 px, visible | hidden |
+| header “Czaty” | static | sticky (stays on top while the list moves) |
+| drag/wheel moves the content | no | yes |
+
+The fix is three small things: the patch adds `chats-tab` to the app's own allow-list in the bundle, `rise-scroll-guard.js` pulls Chats into the same “whole tab scrolls” treatment Settings and Profile already get (and pins the header), and the earlier over-eager rules are kept so `min-height:0` applies to every list regardless of how tall it currently is.
+
+`node tools/scroll-guard-selftest.mjs` → 17 checks. `node tools/scroll-fixture/browser-check.mjs` → 7 checks in real Chromium. `native-chat-selftest` → 31, `patch-native-chat-selftest` → 12.
+
+**Still not a phone.** This is Chromium in a phone viewport on the app's own CSS, which is much closer than reading CSS by eye, but the Android WebView is a different build. If anything still sticks there, the next suspect is the same allow-list logic in the packed bundle.
 
 ## Honest summary
 
